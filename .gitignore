@@ -1,0 +1,25 @@
+.build/
+dist/
+artifacts/
+.DS_Store
+*.xcuserstate
+__pycache__/
+*.pyc
+
+# Local credentials and application data
+.env
+.env.*
+!.env.example
+apikey.md
+secret.key
+credentials.json
+*.pem
+*.p12
+*.pfx
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# One-off local service maintenance, not part of OkDocker
+/scripts/restart-xhs-key-path.py
