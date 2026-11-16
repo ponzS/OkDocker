@@ -15,7 +15,7 @@
 - `Views.swift` / `Entry.swift`：SwiftUI/AppKit 启动器、菜单栏、导入审批、设置及 CLI。主线程不执行镜像构建或 Docker/Apple CLI。
 - `LANAccess.swift`：用户独立授权的宿主 TCP 入口与进程身份检查；只转发指定应用的已审批前后端 loopback 端口到当前私有 Wi-Fi/以太网 IPv4。独立助手在 UI 退出后保留，开关/关闭仅影响自己的入口。直接改 Apple 发布参数需替换现有容器并丢失未挂载可写层，所以不能由原部署适配承担；不为此修改配置摘要或重建 VM。
 - `AndroidBridge.swift`：每应用独立令牌助手。Apple 路径只监听当前用户私有临时目录的 Unix socket；legacy Docker 保留 loopback TCP 模式。共享 Mac ADB 仍只在原 `127.0.0.1:5037`，不转移 USB/ADB 凭据。
-- `Resources/Android`：静态 Linux arm64 转发程序。新建的 Apple 后端容器把它作为入口启动，监听本容器 `/run/okdocker-adb.sock`，写完令牌后 exec 镜像原命令。地址不随 VM IP 改变。不开放手机桥 TCP，也不改 PF/DNS/Private Relay。旧 sidecar 只为已创建的旧容器保留。
+- `Resources/Android`：静态 Linux arm64 转发程序。Apple 后端容器以它作为持续运行的入口：先监听本容器 `/run/okdocker-adb.sock`，验证自身挑战应答及真实宿主 ADB 版本，再作为子进程启动镜像原命令。入口转发停止信号，业务退出时一起退出，不自动重启业务。每个新连接重读令牌。启动检查真实转发协议，不能只看 socket 能连上或 VM 是 running。旧版先拉子进程再 exec、同时设置父进程死亡信号，可能在 exec 时因父线程消失而杀死转发；这套组合已经移除。地址不随 VM IP 改变。不开放手机桥 TCP，也不改 PF/DNS/Private Relay。旧 sidecar 只为已创建的旧容器保留。
 - `scripts/install-app.py`：显式本机升级、旧包备份与原子替换；与只构建 dist 的脚本分开，避免每次打包悄悄替换运行中的应用。既不修改登录设置，也不启停运行时/容器或清除系统隔离属性。
 
 ## 生命周期与持久化

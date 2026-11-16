@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 mkdir -p artifacts dist Resources
 if command -v go >/dev/null 2>&1; then
-  (cd Resources/Android/relay && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '-s -w' -o ../adb-relay .)
+  (cd Resources/Android/relay && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags '-s -w' -o ../adb-relay .)
 fi
 test -f Resources/Android/adb-relay
 swift build -c release
@@ -36,7 +36,7 @@ import plistlib,sys
 with open(sys.argv[1], 'wb') as f:
     plistlib.dump({'CFBundleIdentifier':'dev.okdocker.app','CFBundleName':'OkDocker',
       'CFBundleDisplayName':'OkDocker','CFBundleExecutable':'OkDocker','CFBundlePackageType':'APPL',
-      'CFBundleShortVersionString':'0.3.0','CFBundleVersion':'4','CFBundleIconFile':'AppIcon',
+      'CFBundleShortVersionString':'0.3.1','CFBundleVersion':'5','CFBundleIconFile':'AppIcon',
       'LSMinimumSystemVersion':'26.0','NSHighResolutionCapable':True,
       'LSApplicationCategoryType':'public.app-category.developer-tools',
       'NSHumanReadableCopyright':'OkDocker contributors · MIT',

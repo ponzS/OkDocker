@@ -33,7 +33,10 @@ enum VersionDeployment {
         _ = try AppleRuntime.network(next, create: true)
         let old = try AppleRuntime.containers(record)
         var prepared: AppleRuntime.AndroidGuest?
-        if v.manifest.hostAndroidDevices == true { prepared = try AppleRuntime.prepareGuest(next) }
+        if v.manifest.hostAndroidDevices == true {
+            let liveRelay = old.contains { AppleRuntime.active($0) && AppleRuntime.guest(from: $0, record: record) != nil }
+            prepared = try AppleRuntime.prepareGuest(next, refreshExecutable: !liveRelay)
+        }
         // Prepare and audit stopped containers while the old deployment still runs.
         // Nothing can start these service VMs until their record is committed below.
         for (service, spec) in v.manifest.services.sorted(by: { $0.key < $1.key }) {

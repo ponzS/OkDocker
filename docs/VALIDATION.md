@@ -4,6 +4,21 @@
 
 These notes cover OkDocker itself. They use isolated fixtures, ports, and private registries. They do not deploy or mount a production directory.
 
+## 0.3.1 in-container ADB lifecycle fix (2026-11-17)
+
+The 0.3.0 exec/parent-death-signal relay failed the new isolated regression at its first start: a workload querying ADB immediately could not start with the transport ready. Manual relay startup was not a durable fix.
+
+The relay now remains a supervisor in the same container, binds and verifies the local relay protocol and host ADB before starting the workload, forwards termination signals, and exits with the workload. It reloads token configuration for each new connection. OkDocker verifies the full transport after start, and also repairs a missing host bridge on an explicit start of an already running app. It does not automatically restart application code or create another VM.
+
+Verified locally:
+
+- **73 Swift tests** passed (`artifacts/adb-fix-swift.log`).
+- Go behavior tests passed with `-race` on macOS and again as a Linux arm64 test executable inside the real Apple VM: relay framing, token rotation, rejecting an ordinary empty ADB server as a relay, complete response after half-close, stale socket replacement, and five supervisor start/TERM cycles.
+- **33 isolated upgrade/lifecycle checks** passed (`artifacts/android-upgrade-fix.log`, `artifacts/android-lifecycle/report.json`): an old-manager-created container starts with the fixed relay without replacement or lost writable data; four force-stop/start cycles can immediately query ADB and match the native device list; exactly one app VM; bridge recreation and token reload while the same guest boot ID and workload PID/start time remain; wrong-token and shared-server shutdown rejection; private socket; TERM delivery and actual stopped state.
+- **30 core integration checks** passed (`artifacts/adb-fix-core.log`).
+
+Only `host:version` and `host:devices-l` were sent to shared ADB. No phone shell, screen capture, input, installation, or business action was performed. Shared ADB PID and all preexisting container states were unchanged; fixtures cleaned up without errors. Real-app data and configuration were not mounted for these tests. This is not proof of arbitrary host-crash recovery: the live guest reloads a rotated token when an explicit start recreates the host bridge, but no automatic host watchdog is claimed. Upgrade an existing in-container relay by stopping and starting the app once with the updated manager, without changing its application version or rebuilding its business image.
+
 ## 0.3 application versions and build scripts (2026-11-16)
 
 Environment: Apple M4 / 16 GiB / macOS 27.2 / Apple container 1.7.1, official per-container Linux arm64 VMs.

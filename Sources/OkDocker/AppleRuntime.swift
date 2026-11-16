@@ -105,7 +105,7 @@ enum AppleRuntime {
         return process
     }
     static func guestDirectory(_ record: AppRecord) -> URL { Runtime.appDirectory(record).appendingPathComponent("android-guest") }
-    static func prepareGuest(_ record: AppRecord) throws -> AndroidGuest {
+    static func prepareGuest(_ record: AppRecord, refreshExecutable: Bool = true) throws -> AndroidGuest {
         let bridge = try AndroidBridge.launchUnix(record)
         guard let token = bridge["token"] as? String, !token.isEmpty else { throw Problem(L("Android bridge token is missing", tr("安卓桥令牌缺失"))) }
         let directory = guestDirectory(record)
@@ -113,11 +113,23 @@ enum AppleRuntime {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
         try Runtime.json(["socket": hostSocketMount, "token": token, "listenSocket": "/run/okdocker-adb.sock"], to: directory.appendingPathComponent("bridge.json"))
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: directory.appendingPathComponent("bridge.json").path)
-        let binary = directory.appendingPathComponent("adb-relay")
-        if FileManager.default.fileExists(atPath: binary.path) { try FileManager.default.removeItem(at: binary) }
-        try FileManager.default.copyItem(at: Runtime.resources.appendingPathComponent("Android/adb-relay"), to: binary)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        if refreshExecutable {
+            // Only refresh before a stopped container starts. Never replace the
+            // executable under a running workload. Keep its mount and layer.
+            let binary = directory.appendingPathComponent("adb-relay")
+            try Runtime.write(Data(contentsOf: Runtime.resources.appendingPathComponent("Android/adb-relay")), to: binary)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        }
         return AndroidGuest(directory: directory.path, hostSocket: AndroidBridge.unixSocket(record).path, command: [])
+    }
+    static func requireAndroidTransport(_ container: String) throws {
+        let deadline = Date().addingTimeInterval(12)
+        repeat {
+            let result = try cli(["exec", container, relayExecutable, "--check", relayConfigPath], timeout: 8, allowFailure: true)
+            if result.code == 0 { return }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while Date() < deadline
+        throw Problem(L("The container is running, but its ADB transport failed verification. Restart this app with the updated OkDocker; no containers or data were deleted.", "容器已启动，但 ADB 通道校验失败。请使用更新后的 OkDocker 关闭并重新启动此应用；未删除容器或数据。"))
     }
     static func stopUnusedSidecar(_ record: AppRecord) throws {
         let ids = try ownedContainers(record).filter { service($0) == "okdocker-adb" && active($0) }.map { try id($0) }
@@ -260,7 +272,16 @@ enum AppleRuntime {
             } else { throw Problem(L("An existing container is not one of the approved services", tr("现有容器不属于本次授权的服务"))) }
         }
         let current = try observe(record)
-        if current.state == "running", current.containers == expected.count { return L("\(record.name) is already running", "\(record.name) 已在运行") }
+        if current.state == "running", current.containers == expected.count {
+            if v.manifest.hostAndroidDevices == true && !legacyAndroid {
+                // A live VM says nothing about ADB. Recreate a missing host
+                // bridge and publish its token, then verify the in-guest owner
+                // and real host protocol without restarting the application.
+                _ = try prepareGuest(record, refreshExecutable: false)
+                try requireAndroidTransport(name(record, backendName))
+            }
+            return L("\(record.name) is already running", "\(record.name) 已在运行")
+        }
         if current.running > 0 && record.deployment == nil { throw Problem(L("The application is only partly running. Force-stop it and try again", tr("应用部分运行，请先强制关闭后重试"))) }
         try LANAccess.stop(record)
         let runningServices = Set(existing.filter { ($0["status"] as? [String: Any])?["state"] as? String == "running" }.compactMap(service))
@@ -279,7 +300,7 @@ enum AppleRuntime {
         var prepared: AndroidGuest?
         if v.manifest.hostAndroidDevices == true {
             if legacyAndroid { adbAddress = try startAndroid(record, v: v, existing: existing) }
-            else { prepared = try prepareGuest(record); adbAddress = adbSocketEnv }
+            else { prepared = try prepareGuest(record, refreshExecutable: !runningServices.contains(backendName)); adbAddress = adbSocketEnv }
         }
         for port in pendingPorts { try Runtime.requireFreePort(port) }
         try VersionDeployment.recheck(record, desired: v)
@@ -304,6 +325,9 @@ enum AppleRuntime {
             let audited = serviceGuest ?? ((service == backendName && !legacyAndroid) ? guest(from: created, record: record) : nil)
             try audit(created, record: record, v: v, service: service, spec: spec, androidGuest: audited, legacyPeer: legacyAndroid && service == backendName)
             if (created["status"] as? [String: Any])?["state"] as? String != "running" { _ = try cli(["start", containerName], timeout: 120) }
+            if v.manifest.hostAndroidDevices == true && !legacyAndroid && service == backendName {
+                try requireAndroidTransport(containerName)
+            }
         }
         existing = try containers(record)
         guard existing.count == expected.count, existing.allSatisfy({ ($0["status"] as? [String: Any])?["state"] as? String == "running" }) else { throw Problem(L("Not every Apple container is running. Check the actual state or force-stop the application", tr("未观察到全部 Apple 容器运行；请查看实际状态或强制关闭"))) }
