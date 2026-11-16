@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+apikey.md
+secret.key
+*.pem
+*.sqlite*
+*.db*
+data
+dist

@@ -88,14 +88,22 @@ struct Runtime {
     }
     // One-time, backed-up default change. Never silently move a running app.
     static func upgradeBackendDefault() throws {
-        guard try load().schemaVersion < 2 else { return }
-        try transaction { registry in
-            guard registry.schemaVersion < 2 else { return }
-            let backup = support.appendingPathComponent("registry-before-apple.json")
-            guard !FileManager.default.fileExists(atPath: backup.path) else { throw Problem("已有 Apple 迁移备份但注册表版本仍旧，请人工检查；不会覆盖备份") }
-            try write(JSONEncoder().encode(registry), to: backup)
-            registry.schemaVersion = 2; registry.context = AppleRuntime.context
-            for i in registry.apps.indices where registry.apps[i].context != AppleRuntime.context { registry.apps[i].autoStart = false }
+        if try load().schemaVersion < 2 {
+            try transaction { registry in
+                guard registry.schemaVersion < 2 else { return }
+                let backup = support.appendingPathComponent("registry-before-apple.json")
+                guard !FileManager.default.fileExists(atPath: backup.path) else { throw Problem("已有 Apple 迁移备份但注册表版本仍旧，请人工检查；不会覆盖备份") }
+                try write(JSONEncoder().encode(registry), to: backup)
+                registry.schemaVersion = 2; registry.context = AppleRuntime.context
+                for i in registry.apps.indices where registry.apps[i].context != AppleRuntime.context { registry.apps[i].autoStart = false }
+            }
+        }
+        // Additive 0.3 metadata keeps registry format 2, with a pre-upgrade backup.
+        let backup = support.appendingPathComponent("registry-before-versions.json")
+        if FileManager.default.fileExists(atPath: support.appendingPathComponent("registry.json").path), !FileManager.default.fileExists(atPath: backup.path) {
+            try transaction { registry in
+                if !FileManager.default.fileExists(atPath: backup.path) { try write(JSONEncoder().encode(registry), to: backup) }
+            }
         }
     }
     static func migrateToApple(_ record: AppRecord, confirmOldStopped: Bool) throws -> String {
@@ -132,13 +140,14 @@ struct Runtime {
         return try transaction { registry in
             if let old = registry.apps.first(where: { $0.root == v.root.path && $0.context == context }) {
                 guard try observe(old).running == 0 else { throw Problem("更新配置前请先关闭这个应用") }
-                var updated = old; updated.name = v.manifest.name; updated.icon = v.manifest.icon; updated.manifestHash = v.hash
+                var updated = old; updated.name = v.manifest.name; updated.icon = v.manifest.icon; updated.manifestHash = v.hash; updated.approvalHash = try v.approvalHash(); updated.manifestVersion = v.manifest.version
                 registry.apps[registry.apps.firstIndex(where: { $0.id == old.id })!] = updated
                 if let icon = v.icon { try write(Data(contentsOf: icon), to: appDirectory(updated).appendingPathComponent("approved-icon")) }
                 return updated
             }
             let id = UUID().uuidString.lowercased()
-            let record = AppRecord(id: id, root: v.root.path, name: v.manifest.name, icon: v.manifest.icon, project: "okdocker-" + String(id.prefix(12)), context: context, autoStart: false, manifestHash: v.hash, importedAt: Date())
+            var record = AppRecord(id: id, root: v.root.path, name: v.manifest.name, icon: v.manifest.icon, project: "okdocker-" + String(id.prefix(12)), context: context, autoStart: false, manifestHash: v.hash, importedAt: Date())
+            record.approvalHash = try v.approvalHash(); record.manifestVersion = v.manifest.version
             if let icon = v.icon { try write(Data(contentsOf: icon), to: appDirectory(record).appendingPathComponent("approved-icon")) }
             registry.apps.append(record); registry.context = context
             return record
@@ -149,7 +158,22 @@ struct Runtime {
     }
     static func approved(_ record: AppRecord) throws -> Validated {
         let v = try validate(root: URL(fileURLWithPath: record.root))
-        guard v.hash == record.manifestHash else { throw Problem("配置已改变。请先关闭应用并重新导入，确认新的目录、端口与安卓权限。") }
+        if v.hash == record.manifestHash {
+            if record.approvalHash == nil {
+                let hash = try v.approvalHash()
+                try transaction { registry in
+                    if let i = registry.apps.firstIndex(where: { $0.id == record.id && $0.manifestHash == record.manifestHash }), registry.apps[i].approvalHash == nil {
+                        registry.apps[i].approvalHash = hash; registry.apps[i].manifestVersion = v.manifest.version
+                    }
+                }
+            }
+            return v
+        }
+        guard record.context == AppleRuntime.context, let approved = record.approvalHash, approved == (try v.approvalHash()) else {
+            throw Problem("配置已改变或旧登记缺少授权基线。请先关闭并重新导入确认；只有 version 变化可以自动重新部署。")
+        }
+        // Formatting-only changes do not invalidate the existing container seal.
+        if v.manifest.version == record.manifestVersion { return Validated(root: v.root, manifest: v.manifest, hash: record.manifestHash, icon: v.icon) }
         return v
     }
     static func ids(_ record: AppRecord, runningOnly: Bool = false) throws -> [String] {
@@ -183,6 +207,7 @@ struct Runtime {
         return value
     }
     static func generate(_ record: AppRecord, validated v: Validated, bridge: [String: Any]? = nil) throws {
+        guard !v.manifest.services.values.contains(where: { $0.build?.script != nil }) else { throw Problem("build.script 仅支持 Apple container 后端，请先显式迁移登记") }
         var services: [String: Any] = [:]
         for (name, s) in v.manifest.services {
             var service: [String: Any] = ["restart": "no", "init": true, "security_opt": ["no-new-privileges:true"], "labels": ["dev.okdocker.app": record.id]]
@@ -249,7 +274,7 @@ struct Runtime {
     }
     static func start(_ record: AppRecord) throws -> String {
         let latest = try self.record(record.id)
-        guard latest.context == record.context, latest.manifestHash == record.manifestHash else { throw Problem("登记已改变，请刷新后再启动") }
+        guard latest.context == record.context, latest.manifestHash == record.manifestHash, latest.deployment == record.deployment else { throw Problem("登记已改变，请刷新后再启动") }
         try FileManager.default.createDirectory(at: appDirectory(record), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let gate = open(appDirectory(record).appendingPathComponent("stop.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
         guard gate >= 0 else { throw Problem("无法锁定操作") }; defer { close(gate) }

@@ -1,4 +1,31 @@
-# 本机验证记录 · 0.2.1 Apple container 验证版
+# 本机验证记录 · 0.3 Apple container 验证版
+
+## 0.3 应用版本与构建脚本（2026-11-16）
+
+环境沿用本机 Apple M4 / 16 GiB / macOS 27.2 / Apple container 1.7.1，官方每容器 Linux arm64 VM。以下均为独立 fixture、端口和私有注册表，不部署或挂载生产目录。
+
+- **71 项 Swift 测试通过**（原 51 + 20）：应用 version 与 schemaVersion 分离、版本字符串/旧登记兼容、版本排除后的完整授权摘要、实际容器版本对比、代际命名长度与唯一性、脚本路径/符号链接边界、JSON exec 参数、Linux shebang 与默认 sh、唯一构建阶段标记、原 Dockerfile 不变、Dockerfile 专属 ignore 保留及临时文件清理。`artifacts/version-swift-test.log`。
+- **31 项真实版本/脚本检查通过**：两个应用；Shell 与 Python shebang 真实 Linux 打包并返回构建产物；Dockerfile/宿主未执行脚本；相同版本运行/停止重启复用；版本变化新镜像引用与新容器；仅版本变化仍生成新的 UUID 产物（okdocker.json 已排除出构建上下文，验证无缓存 RUN）；版本降级也重新构建；旧层停止保留并能在当前服务停止后恢复读取；新容器不继承旧层；宿主挂载保留；部分停止的选中代际可继续；失败脚本/构建中版本再改不停止旧服务；版本不能越过端口授权；原授权 LAN 助手转到新发布者；ADB Unix 通道仍可用；普通与 Dockerfile 专属 .dockerignore 均生效；旧登记安全补授权基线；关闭/移除覆盖全部代际且不改其他容器的观测状态。`artifacts/version-validation/report.json`、`artifacts/version-integration-test.log`，清理错误为空。
+- **核心 30 项 / 取消 7 项回归通过**：`artifacts/version-core-regression.log`、`artifacts/version-cancellation-regression.log`。取消仍用真实 build 插件/孤儿客户端及延迟检查，不停止共享运行时或 builder。
+- **0.3.0 已安装到 `/Applications/OkDocker.app` 并复测**：旧 0.2.1 包先备份，签名和构建可执行文件一致；ad-hoc 签名而非 Developer ID 公证。已安装程序重跑版本/脚本 **31 项**、核心 **30 项**、取消 **7 项**；原生安装验收 **12 项**：真实主窗口/菜单栏/关闭重开、规则与带配置版本的应用设置、脚本示例由 GUI 启动、旧服务运行时 GUI 启动检查新版本并真正切换 HTTP 内容、UI 退出保留服务、规则与源码一致、原有应用登记及全局登录偏好不变。仅用隔离注册表策略测试自动启动，不更改 SMAppService。`tests/installed_smoke.py`，`artifacts/version-installed/report.json` 与 `version-installed-{core,cancellation,versions}.log`。
+- 本轮未重启用户现有应用或改其源目录/配置，未进行完整 GUI 逐项点击、真实注销登录、手机 LAN、性能或数据库升级回滚验收。界面检查发现设置说明会截断，已改为完整换行后复验；截图仅自己的 fixture 视图。
+
+ADB 此轮只发送 `host:version` 检查通道，不枚举/操作手机；LAN 只从 Mac 请求自身私有地址，**不替代下述物理手机网络未通过的结论**。保留旧层不是挂载数据快照，没有声称自动迁移数据、自动回滚或断电事务验收通过。模板源码暂存规则已更新，但未对相邻实际应用运行生成/安装，也未修改其生产配置。
+
+复验：
+
+```sh
+swift test
+bash scripts/build-app.sh
+python3 tests/apple_versions.py
+OKDOCKER_BIN="$PWD/dist/OkDocker.app/Contents/MacOS/OkDocker" python3 tests/apple_integration.py
+python3 tests/apple_cancellation.py
+# 已安装副本：不停止共享运行时或更改系统登录项
+python3 tests/installed_smoke.py
+OKDOCKER_BIN=/Applications/OkDocker.app/Contents/MacOS/OkDocker python3 tests/apple_versions.py
+```
+
+---
 
 ## 0.2.1 局域网与规则复制（2026-11-16）
 

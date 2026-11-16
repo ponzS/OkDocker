@@ -61,7 +61,7 @@ import ServiceManagement
             for app in apps where app.context == AppleRuntime.context && app.autoStart && !autostartHandled.contains(app.id) && !busy.contains(app.id) {
                 if let state = observations[app.id], state.state != "engineUnavailable" {
                     autostartHandled.insert(app.id)
-                    if state.running == 0 { start(app) }
+                    start(app) // Also check a new version when the old deployment is already running.
                 }
             }
             if !engineReady && apps.contains(where: { $0.autoStart && $0.context == context }) && !loginEngineAttempted {
@@ -146,7 +146,8 @@ import ServiceManagement
         do {
             let v = try validate(root: root)
             let alert = NSAlert(); alert.messageText = "添加「\(v.manifest.name)」"
-            alert.informativeText = "授权目录：\(v.root.path)\n前端：\(v.manifest.frontend.url.absoluteString)\n服务端：\(v.manifest.backend.url.absoluteString)\n安卓手机：\(v.manifest.hostAndroidDevices == true ? "允许访问全部已授权安卓设备（含后续接入）" : "不注入共享通道")\n\n只导入你信任的应用。安卓开关不是恶意程序的网络/设备沙箱；运行时网络权限需要单独验收。镜像/构建会运行其代码；默认仅挂载本应用目录。登录自动启动保持关闭。"
+            let scripts = v.manifest.services.sorted(by: { $0.key < $1.key }).compactMap { key, spec in spec.build?.script.map { "\(key): \($0)" } }.joined(separator: "、")
+            alert.informativeText = "应用版本：\(v.manifest.version ?? "未设置")\nLinux 构建脚本：\(scripts.isEmpty ? "未单独指定（由 Dockerfile 定义）" : scripts)\n授权目录：\(v.root.path)\n前端：\(v.manifest.frontend.url.absoluteString)\n服务端：\(v.manifest.backend.url.absoluteString)\n安卓手机：\(v.manifest.hostAndroidDevices == true ? "允许访问全部已授权安卓设备（含后续接入）" : "不注入共享通道")\n\n只导入你信任的应用。安卓开关不是恶意程序的网络/设备沙箱；运行时网络权限需要单独验收。镜像/构建会运行其代码；不在 Mac 上直接执行构建脚本。版本变化会重新部署并短暂停机，旧层保留。默认仅挂载本应用目录。首次导入不启用登录启动，已有用户设置保留。"
             alert.addButton(withTitle: "确认导入"); alert.addButton(withTitle: "取消")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             let context = context

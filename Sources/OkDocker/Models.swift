@@ -11,7 +11,7 @@ struct Endpoint: Codable, Equatable {
     var url: URL { URL(string: "http://127.0.0.1:\(hostPort)\(path)")! }
 }
 struct Mount: Codable { var source: String; var target: String; var readOnly: Bool? }
-struct BuildSpec: Codable { var context: String; var dockerfile: String }
+struct BuildSpec: Codable { var context: String; var dockerfile: String; var script: String? = nil }
 struct ServiceSpec: Codable {
     var image: String?
     var build: BuildSpec?
@@ -30,6 +30,7 @@ struct Manifest: Codable {
     var autoStart: Bool?
     var hostAndroidDevices: Bool?
     var services: [String: ServiceSpec]
+    var version: String? = nil
 }
 struct AppRecord: Codable, Identifiable, Equatable {
     var id: String
@@ -43,7 +44,10 @@ struct AppRecord: Codable, Identifiable, Equatable {
     var importedAt: Date
     // Runtime permission, never granted by an imported manifest. Missing = off.
     var lanAccess: Bool? = nil
-    static func == (a: Self, b: Self) -> Bool { a.id == b.id && a.root == b.root && a.name == b.name && a.context == b.context && a.autoStart == b.autoStart && a.lanAccess == b.lanAccess && a.manifestHash == b.manifestHash }
+    var approvalHash: String? = nil
+    var manifestVersion: String? = nil
+    var deployment: String? = nil
+    static func == (a: Self, b: Self) -> Bool { a.id == b.id && a.root == b.root && a.name == b.name && a.context == b.context && a.autoStart == b.autoStart && a.lanAccess == b.lanAccess && a.manifestHash == b.manifestHash && a.deployment == b.deployment && a.manifestVersion == b.manifestVersion }
 }
 struct Registry: Codable { var schemaVersion = 2; var context = AppleRuntime.context; var apps: [AppRecord] = [] }
 struct Observation: Codable {
@@ -62,6 +66,12 @@ struct Validated {
     let manifest: Manifest
     let hash: String
     let icon: URL?
+    // All declarative settings except the release version remain approved as a unit.
+    func approvalHash() throws -> String {
+        var value = manifest; value.version = nil
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return digest(try encoder.encode(value))
+    }
 }
 func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
@@ -86,12 +96,15 @@ func validate(root input: URL) throws -> Validated {
     let m: Manifest
     do { m = try JSONDecoder().decode(Manifest.self, from: data) } catch { throw Problem("okdocker.json 格式不正确：\(error.localizedDescription)") }
     guard m.schemaVersion == 1 else { throw Problem("不支持的配置版本，请使用 schemaVersion: 1") }
+    if let version = m.version {
+        guard version.range(of: "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}\\z", options: .regularExpression) != nil else { throw Problem("version 须为 1–64 位字母、数字或 . _ + -，例如 1.0.0") }
+    }
     guard m.id.range(of: "^[a-z][a-z0-9-]{0,47}$", options: .regularExpression) != nil else { throw Problem("id 只能使用小写字母、数字与连字符，且以字母开头") }
     guard !m.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, m.name.count <= 60 else { throw Problem("应用昵称须为 1–60 个字符") }
     guard !m.services.isEmpty, m.services.count <= 16 else { throw Problem("请配置 1–16 个容器服务") }
     // Unknown fields are errors: never silently ignore a misspelled permission.
     let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-    let known: Set<String> = ["schemaVersion","id","name","icon","frontend","backend","autoStart","hostAndroidDevices","services"]
+    let known: Set<String> = ["schemaVersion","version","id","name","icon","frontend","backend","autoStart","hostAndroidDevices","services"]
     guard Set(object.keys).isSubset(of: known) else { throw Problem("配置含未知字段：\(Set(object.keys).subtracting(known).sorted().joined(separator: ", "))") }
     for name in ["frontend", "backend"] {
         guard let raw = object[name] as? [String: Any], Set(raw.keys).isSubset(of: ["service", "directory", "path", "hostPort", "containerPort"]) else { throw Problem("端点含未知字段：\(name)") }
@@ -109,7 +122,8 @@ func validate(root input: URL) throws -> Validated {
         if let image = s.image { guard !image.isEmpty, !image.contains(where: { $0.isWhitespace }), !image.contains("$") else { throw Problem("镜像名无效") } }
         if let b = s.build {
             let context = try contained(b.context, root: root, directory: true)
-            _ = try contained(b.dockerfile, root: context, directory: false)
+            let dockerfile = try contained(b.dockerfile, root: context, directory: false)
+            _ = try BuildRecipe.render(b, context: context, dockerfile: dockerfile)
         }
         if let cmd = s.command { guard !cmd.isEmpty, cmd.count <= 128, !cmd.contains(where: { $0.contains("\0") }) else { throw Problem("command 必须是容器内的程序与参数数组") } }
         if let working = s.workingDirectory { guard working.hasPrefix("/"), !working.contains("\0") else { throw Problem("workingDirectory 必须是容器内绝对目录") } }
@@ -120,7 +134,7 @@ func validate(root input: URL) throws -> Validated {
         let raw = (object["services"] as! [String: Any])[name] as! [String: Any]
         let fields: Set<String> = ["image","build","command","environment","workingDirectory","mounts"]
         guard Set(raw.keys).isSubset(of: fields) else { throw Problem("服务 \(name) 含未支持字段；不允许 privileged、devices、host network 或任意宿主命令") }
-        if let build = raw["build"] as? [String: Any], !Set(build.keys).isSubset(of: ["context", "dockerfile"]) { throw Problem("build 含未知字段") }
+        if let build = raw["build"] as? [String: Any], !Set(build.keys).isSubset(of: ["context", "dockerfile", "script"]) { throw Problem("build 含未知字段") }
         for mount in raw["mounts"] as? [[String: Any]] ?? [] {
             guard Set(mount.keys).isSubset(of: ["source", "target", "readOnly"]) else { throw Problem("mounts 含未知字段") }
         }

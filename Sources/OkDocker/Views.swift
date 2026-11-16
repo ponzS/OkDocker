@@ -38,7 +38,7 @@ struct AppActions: View {
         Button("复制局域网地址", systemImage: "doc.on.doc") { model.copyLAN(app) }.disabled(model.lanStatuses[app.id]?.addresses.isEmpty != false)
         Toggle("允许局域网访问", isOn: Binding(get: { model.apps.first(where: { $0.id == app.id })?.lanAccess == true }, set: { model.setLAN(app, enabled: $0) })).disabled(model.busy.contains("lan-" + app.id))
         Divider()
-        Button(app.context == AppleRuntime.context ? "启动应用" : "迁移到 Apple container…", systemImage: "play.fill") { model.start(app) }.disabled(model.busy.contains(app.id) || (model.observations[app.id]?.running ?? 0) > 0)
+        Button(app.context == AppleRuntime.context ? "启动 / 检查版本更新" : "迁移到 Apple container…", systemImage: "play.fill") { model.start(app) }.disabled(model.busy.contains(app.id))
         Button("强制关闭应用", systemImage: "stop.fill", role: .destructive) { model.close(app) }.disabled(model.busy.contains(app.id + "-stop") || (model.observations[app.id]?.state == "stopped" && !model.busy.contains(app.id)))
         Toggle("登录后自动启动", isOn: Binding(get: { app.autoStart }, set: { model.setAuto(app, enabled: $0) }))
         Divider()
@@ -209,6 +209,7 @@ struct AppSettings: View {
             HStack { AppArtwork(model: model, app: app, size: 50); Text(app.name).font(.title2.bold()); Spacer() }
             if let manifest {
                 Text("授权目录").font(.headline); Text(app.root).textSelection(.enabled).font(.caption)
+                LabeledContent("配置版本", value: manifest.version ?? "未设置（兼容旧配置）")
                 LabeledContent("前端", value: manifest.frontend.url.absoluteString)
                 LabeledContent("服务端", value: manifest.backend.url.absoluteString)
                 Toggle("允许局域网访问", isOn: Binding(get: { model.apps.first(where: { $0.id == app.id })?.lanAccess == true }, set: { model.setLAN(app, enabled: $0) })).disabled(model.busy.contains("lan-" + app.id))
@@ -225,7 +226,7 @@ struct AppSettings: View {
                 LabeledContent("运行时", value: app.context)
                 if app.context != AppleRuntime.context { Button("迁移登记到 Apple container…") { model.migrate(app) } }
                 Toggle("登录后自动启动服务", isOn: Binding(get: { model.apps.first(where: { $0.id == app.id })?.autoStart ?? false }, set: { model.setAuto(app, enabled: $0) }))
-                Text("设置来自 okdocker.json。编辑后先关闭再重新导入；已有容器配置变化不会自动删除可写层。ADB 开关不是网络防火墙，只导入可信代码。强制关闭可能中断数据写入。").font(.caption).foregroundStyle(.secondary)
+                Text("修改源码后提高 okdocker.json 的 version，再启动或检查版本更新：重新构建并切换部署，旧容器停止并保留。其他配置变化须先关闭并重新导入确认。更新会短暂停机，持久数据应显式挂载并自行备份。ADB 开关不是网络防火墙；强制关闭可能中断写入。").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else if loadError.isEmpty { ProgressView("读取配置…请正常批准系统目录访问请求") }
             else { Text(loadError).foregroundStyle(.orange) }
             HStack { Button("打开目录") { model.reveal(app) }; RulesControls(model: model); Spacer(); Button("完成") { dismiss() }.keyboardShortcut(.defaultAction) }
@@ -242,7 +243,7 @@ enum ConfigurationRules {
     static func text(resources: URL = Runtime.resources) throws -> String {
         let file = resources.appendingPathComponent("CONFIGURATION.md")
         let rules = try String(contentsOf: file, encoding: .utf8)
-        return "请根据以下 OkDocker 规则，检查我提供的项目并帮助生成或调整 okdocker.json 和必要的 Dockerfile。先确认真实目录、启动命令和端口；不要猜测，不要输出密钥；只修改我授权的项目目录。局域网访问由用户在 OkDocker 中单独开启，不能通过配置文件自动授权。\n\n" + rules
+        return "请根据以下 OkDocker 规则，检查我提供的项目并帮助生成或调整 okdocker.json、必要的 Dockerfile 和 Linux 构建脚本。先确认真实目录、启动命令和端口；不要猜测，不要输出密钥；只修改我授权的项目目录。局域网访问由用户在 OkDocker 中单独开启，不能通过配置文件自动授权。\n\n" + rules
     }
     @MainActor static func copy(_ text: String, to pasteboard: NSPasteboard = .general) throws {
         pasteboard.clearContents()

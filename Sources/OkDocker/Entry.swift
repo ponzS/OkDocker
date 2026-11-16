@@ -29,7 +29,7 @@ import Darwin
         print(String(decoding: try encoder.encode(object), as: UTF8.self))
     }
     @MainActor static func cli(_ args: [String]) throws {
-        guard let action = args.first else { throw Problem("用法：--cli validate/import/list/start/close/status/autostart/forget/context/engine") }
+        guard let action = args.first else { throw Problem("用法：--cli validate/import/list/start/close/status/deployments/lan/rules/autostart/forget/context/engine") }
         let operand = args.count > 1 ? args[1] : ""
         switch action {
         case "validate":
@@ -68,6 +68,10 @@ import Darwin
             guard args.contains("--force") else { throw Problem("关闭会发送 SIGKILL，需显式加 --force；不删除数据") }
             print(try Runtime.forceStop(Runtime.record(operand)))
         case "status": try printJSON(Runtime.observe(Runtime.record(operand)))
+        case "deployments":
+            let record = try Runtime.record(operand)
+            guard record.context == AppleRuntime.context else { throw Problem("部署历史仅支持 Apple container 后端") }
+            try printJSON(AppleRuntime.deployments(record))
         case "lan":
             guard args.count == 3, ["on", "off", "status"].contains(args[2]) else { throw Problem("lan ID on|off|status") }
             let record = try Runtime.record(operand)
@@ -200,7 +204,7 @@ import Darwin
     @objc func showFromNotification() { showLauncher() }
     @objc func importApp() { showLauncher(); model.importPanel() }
     @objc func settings() { showLauncher(); NotificationCenter.default.post(name: .okdockerSettings, object: nil) }
-    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "OkDocker", .applicationVersion: "0.2.1", .credits: NSAttributedString(string: "Apple container 原生应用启动器\n默认仅开放应用目录 · 安卓接入显式授权\n强制关闭会中断任务与写入。")]) }
+    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "OkDocker", .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版", .credits: NSAttributedString(string: "Apple container 原生应用启动器\n默认仅开放应用目录 · 安卓接入显式授权\n强制关闭会中断任务与写入。")]) }
     func showLauncher() { popover?.performClose(nil); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showLauncher(); return true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

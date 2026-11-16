@@ -6,6 +6,7 @@ configuration to the source project; does NOT stop/restart the host service.
 """
 import argparse
 import json
+import re
 from pathlib import Path
 import shutil
 
@@ -18,7 +19,10 @@ p.add_argument('--install', action='store_true')
 p.add_argument('--android', action='store_true')
 p.add_argument('--replace', action='store_true', help='explicitly replace an existing installed manifest')
 p.add_argument('--port', type=int)
+p.add_argument('--app-version', default='1.0.0', help='application release version; change when staging updated sources')
 a = p.parse_args()
+if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+\-]{0,63}', a.app_version):
+    p.error('--app-version must be a 1–64 character version string')
 source = a.source.expanduser().resolve()
 if a.install and a.destination:
     p.error('--install cannot be combined with --destination')
@@ -54,7 +58,7 @@ if (ROOT / 'Resources/AppIcon.png').exists():
 port = a.port or (17865 if a.install else 18865)
 mount = str(destination) if a.install else '/workspace'
 manifest = {
-    'schemaVersion': 1, 'id': 'xhs-liushuixian',
+    'schemaVersion': 1, 'version': a.app_version, 'id': 'xhs-liushuixian',
     'name': '小红书流水线' if a.install else '流水线 · 容器验证',
     'icon': '.okdocker-icon.png', 'autoStart': False,
     'hostAndroidDevices': a.android,

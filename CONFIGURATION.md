@@ -7,6 +7,7 @@
 ```json
 {
   "schemaVersion": 1,
+  "version": "1.0.0",
   "id": "my-service",
   "name": "我的服务",
   "icon": "icon.png",
@@ -46,7 +47,8 @@
 
 | 字段 | 规则 |
 |---|---|
-| `schemaVersion` | 必须为 `1` |
+| `schemaVersion` | 配置格式版本，必须为 `1`，不是应用版本 |
+| `version` | 应用版本字符串，建议 `1.0.0`；1–64 字符，以字母/数字开头，其余可用字母/数字及 `. _ + -`。每次启动比较，变化则重新构建部署；旧配置可省略 |
 | `id` | 小写字母开头，后接小写字母/数字/连字符，最多 48 字符 |
 | `name` | 应用昵称，1–60 字符 |
 | `icon` | 可选，相对本目录的 PNG/JPG/ICNS，低于 8 MiB；不能指向目录外 |
@@ -77,7 +79,7 @@ CLI：`OkDocker --cli lan <ID> on|off|status`。`on` 是明确授权前后端供
 
 ## 服务配置
 
-- `image` 或 `build` 二选一。分发时固定镜像 digest；`build.context` 相对应用根目录，`build.dockerfile` 相对 context；不得越界或用符号链接指向目录外。
+- `image` 或 `build` 二选一。分发时固定镜像 digest；`build.context` 相对应用根目录，`build.dockerfile`、可选的 `build.script` 相对 context；不得越界或用符号链接指向目录外。`build.script` 的执行位置与 Dockerfile 标记见下节。
 - `command` 可选，为**容器内**可执行文件与参数数组，不是 Mac shell 命令；没有时使用镜像入口。Rust 等编译应用改代码后须重新构建，不承诺所有语言都自动热重载。
 - `environment` 可选，字符串键值。建议凭据放在目录内权限 `0600` 且 Git 忽略的文件，不写进配置/镜像。`$` 按字面传入，不展开 Mac 的环境变量。
 - `workingDirectory` 是容器内绝对路径。
@@ -86,8 +88,59 @@ CLI：`OkDocker --cli lan <ID> on|off|status`。`on` 是明确授权前后端供
 - 每应用使用带所有权标签的独立 vmnet 网络，每容器独立轻量 VM。需要持久数据时，在应用目录内创建 `data/` 并显式映射。无需必填资源套餐；官方默认 VM 容量（4 vCPU / 1 GiB）仍存在，不是宿主预占。guest 空闲内存未必归还 Mac；默认 NAT 也不是阻止访问 Mac/LAN 的出站防火墙。
 - 不提供 Compose 式裸服务名发现；不能假设容器内 `backend:8080` 自动解析。ADB 使用稳定 Unix socket，不依赖会变化的 VM IP。
 - 使用上述受控声明格式，由管理器生成参数数组并在启动前审计实际 `container inspect` 的挂载、网络和端口。**不执行任意宿主启动/停止脚本，不导入任意 Compose YAML，不支持 privileged、Docker socket、外部网络、宿主 PID/network 或 USB 全设备映射。** 这避免“只访问本目录”的承诺被配置绕过。
-- 修改配置后，先关闭应用、重新导入确认；启动前重新检查路径与配置摘要。如果已存在不同摘要的容器，启动会拒绝而不会静默删除可写层；先备份容器内数据，明确移除旧登记后重新导入。目录移动也需重新导入。
-- 停止/启动重用原容器和镜像。修改源码要重新构建部署时，同样先备份并移除旧容器，再导入创建；不能把启动描述为源码自动热更新。
+- **仅修改 `version` 无需重新导入**，可自动部署；其他配置（含脚本路径、目录、端口、命令、环境、挂载、安卓权限）变化仍须先关闭并重新导入确认，再配合新版本部署。相同版本但配置与旧容器不符时拒绝复用，不静默删层。移动目录仍须重新导入。
+- 源码或脚本内容变化不会自动侦测；要打包新代码，必须同时修改 `version`。相同版本的停止/启动重用容器与镜像，不是热重载。
+
+## 自定义构建脚本
+
+`build.script` 是可选的 **Linux 构建脚本文件路径，相对于 `build.context`**。支持标准 Linux shebang（如 `#!/bin/sh`、`#!/usr/bin/env bash` 或 `#!/usr/bin/env python3`），没有 shebang 时默认用 `/bin/sh`；所选解释器须已装在构建镜像中。仅支持 Apple 后端。脚本在 Dockerfile 的 **Linux 构建阶段**执行，不在 Mac 上执行，不额外挂载宿主目录，也不继承运行容器的 `environment` / `mounts`。不能直接使用依赖 Xcode、`osascript` 或 Mac CLI 的宿主打包脚本。
+
+```json
+"build": {
+  "context": ".",
+  "dockerfile": "Dockerfile",
+  "script": "scripts/build.sh"
+}
+```
+
+Dockerfile 准备工具链并复制源码，在希望执行脚本的阶段放置**唯一、独立的一行** `# okdocker:build-script`：
+
+```dockerfile
+# 请将下列占位基础镜像换为项目实际需要的 Linux arm64 镜像，分发时固定 digest。
+FROM your-build-image AS build
+WORKDIR /src
+COPY . .
+# okdocker:build-script
+
+FROM your-runtime-image
+COPY --from=build /src/dist /app
+WORKDIR /app
+CMD ["/app/my-server"]
+```
+
+管理器生成临时 Dockerfile，将标记替换为 JSON exec 形式的 RUN（无 shebang 时如 `RUN ["/bin/sh", "./scripts/build.sh"]`，有 shebang 则使用声明的 Linux 解释器）；不改原文件、不拼接宿主 shell。Dockerfile 的 `WORKDIR` 此时必须对应复制后的构建上下文根目录，脚本必须已被 `COPY` 放入，所需解释器与编译器必须在此阶段可用；管理器显式调用解释器，不要求脚本在 Mac 上有可执行位。不要把标记放进续行或 heredoc；也不要再手写重复的 `RUN sh scripts/build.sh`。脚本可以调用项目需要的 Cargo、npm、Python 等工具；非零退出码使构建失败。最终镜像和入口仍由 Dockerfile 定义，不会凭空猜测产物位置。标记所在阶段须为最终阶段，或被最终阶段通过 `COPY --from` 等实际引用；否则上游 BuildKit 可以跳过未使用的阶段。
+
+例如 `scripts/build.sh`：
+
+```sh
+#!/bin/sh
+set -eu
+npm ci
+npm run build
+```
+
+不需要脚本时省略 `script`，继续完全由 Dockerfile 的 `RUN` 管理构建。使用 `.dockerignore` 或 `Dockerfile.dockerignore` 排除凭据、数据库和非源码材料；生成临时 Dockerfile 时仍保留原 Dockerfile 专属 ignore 规则。可直接体验 [`examples/scripted-web`](examples/scripted-web)。
+
+## 版本检查与重新部署
+
+1. 首次启动按 `build` 构建（包括指定脚本），或按 `image` 拉取镜像；此后相同版本继续复用现有容器，保留未挂载可写层。
+2. 更新源码或脚本内容后，把 `version` 从如 `1.0.0` 改为 `1.0.1`。点击启动，或对运行中的应用右键 **启动 / 检查版本更新**；CLI 使用 `start ID`。已授权的登录自动启动也会进行同样检查；普通打开网页不触发升级，不定时后台监控源码。
+3. 版本不同时，所有配置为 `build` 的应用服务使用新部署标识、新镜像标签及 `--no-cache --pull`，从当前构建上下文重新打包并执行脚本，不复用旧应用容器。`image` 服务只能重新 pull 并新建容器；固定 digest 对应的内容不会因此改变，要从源码编译必须配置 `build`。ADB 辅助容器/私有通道可继续复用，它不是项目源码镜像。
+4. 先完成构建、创建和实际配置审计；构建失败旧服务继续运行。切换时撤下旧 LAN 入口，对旧应用服务发 SIGTERM，最多等待 30 秒后由上游强制终止，再选择并启动新部署。因此会短暂停机，必须在合适时机触发；原已授权 LAN 入口随后恢复，不自动授予新权限。
+5. **旧容器、镜像与可写层停止并保留，不自动删除，也不自动复制其未挂载数据到新容器。** 持久数据必须映射到应用目录内，如 `data/`；升级前自行备份，并考虑数据库格式迁移。保留旧层不是宿主数据的快照，切换失败不自动回滚旧程序或还原数据，避免反向迁移损坏。准备阶段中断的容器保持停止；选择新部署之后中断，下次同版本启动可继续该部署。
+6. `OkDocker --cli deployments ID` 列出实际各部署的版本、容器 ID、状态及是否为当前选中部署，不输出环境凭据。历史容器保留占用磁盘；移除登记会删除该应用**所有代际**的已停止容器及未挂载可写层，宿主目录保留。恢复历史层需先备份、停止当前部署并确认挂载/依赖可用；不要并行启动共享持久目录的多个代际。
+
+版本只比较字符串是否相同，不做 SemVer 大小排序；降级、删除已有版本也算变化。`schemaVersion` 始终仍是 `1`。旧配置未写 `version` 时保持旧的复用行为。管理器先保存私有 `registry-before-versions.json` 备份。旧登记在原配置摘要仍匹配时自动补齐不含版本的授权基线；若升级管理器之前配置已改变、无法证明只有版本变化，则须先关闭、重新导入确认一次。修改版本不能绕过其他配置的授权确认。
 
 ## 关闭、退出和自动启动
 
@@ -112,6 +165,6 @@ CLI：`OkDocker --cli lan <ID> on|off|status`。`on` 是明确授权前后端供
 0. Desktop/Downloads/外盘目录：macOS 首次可能要求访问批准。请通过应用的导入面板选择目录并正常批准；不关闭 TCC，不自动批准系统权限。
 1. “引擎未就绪”：安装官方 Apple container 1.7.1，点击启动运行时。首次内核下载失败时保留签名/TLS/摘要校验后重试，不关闭校验。旧卡片先确认旧实例停止，再迁移登记；不要新建 Docker context 假装完成 Apple 迁移。
 2. “端口被占用”：修改 `hostPort` 并重新导入，不会杀掉占用端口的其他程序。
-3. “配置已改变”：先关闭，再重新导入确认。
-4. 容器运行但后端不可达：核对容器监听地址、端口、后端路径与日志。
+3. “配置已改变”：仅版本变动且已有授权基线可直接启动；其他变化或缺少旧基线时，先关闭并重新导入确认。
+4. 容器运行但后端不可达：核对容器监听地址、端口、后端路径与日志。构建脚本失败时检查 Linux 工具链、COPY/WORKDIR、标记位置及错误输出；修改代码但仍为旧版本时检查是否同步修改 `version`。
 5. 凭据不可用：检查项目内文件和容器路径，不能通过挂载整个主目录修复。

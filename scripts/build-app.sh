@@ -30,7 +30,7 @@ import plistlib,sys
 with open(sys.argv[1], 'wb') as f:
     plistlib.dump({'CFBundleIdentifier':'dev.okdocker.app','CFBundleName':'OkDocker',
       'CFBundleDisplayName':'OkDocker','CFBundleExecutable':'OkDocker','CFBundlePackageType':'APPL',
-      'CFBundleShortVersionString':'0.2.1','CFBundleVersion':'3','CFBundleIconFile':'AppIcon',
+      'CFBundleShortVersionString':'0.3.0','CFBundleVersion':'4','CFBundleIconFile':'AppIcon',
       'LSMinimumSystemVersion':'26.0','NSHighResolutionCapable':True,
       'LSApplicationCategoryType':'public.app-category.developer-tools',
       'NSHumanReadableCopyright':'OkDocker contributors · MIT',

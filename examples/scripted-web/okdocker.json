@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "id": "scripted-web",
+  "name": "自定义脚本示例",
+  "frontend": {"service": "web", "directory": "public", "path": "/", "hostPort": 18081, "containerPort": 8080},
+  "backend": {"service": "web", "directory": ".", "path": "/", "hostPort": 18081, "containerPort": 8080},
+  "services": {
+    "web": {
+      "build": {"context": ".", "dockerfile": "Dockerfile", "script": "scripts/build.sh"},
+      "mounts": []
+    }
+  }
+}
