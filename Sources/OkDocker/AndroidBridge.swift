@@ -34,11 +34,11 @@ enum AndroidBridge {
             if let data = try? Data(contentsOf: receipt), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let port = object["port"] as? Int {
                 return ["host": host == "127.0.0.1" ? "host.docker.internal" : host, "port": port, "token": token]
             }
-            if !process.isRunning { throw Problem("安卓接入助手启动失败") }
+            if !process.isRunning { throw Problem(tr("安卓接入助手启动失败")) }
             Thread.sleep(forTimeInterval: 0.05)
         }
         if process.isRunning { process.terminate() }
-        throw Problem("安卓接入助手未就绪")
+        throw Problem(tr("安卓接入助手未就绪"))
     }
     static func unixSocket(_ record: AppRecord) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("okadb-" + String(AppleRuntime.scope.prefix(10))).appendingPathComponent(String(record.id.prefix(12)) + ".sock")
@@ -46,7 +46,7 @@ enum AndroidBridge {
     static func peerSocket(_ record: AppRecord) -> URL { unixSocket(record).deletingPathExtension().appendingPathExtension("peer.sock") }
     static func launchUnix(_ record: AppRecord) throws -> [String: Any] {
         let root = Runtime.appDirectory(record), path = unixSocket(record)
-        guard path.path.utf8.count < 104, peerSocket(record).path.utf8.count < 104 else { throw Problem("系统临时目录的 Unix socket 路径过长") }
+        guard path.path.utf8.count < 104, peerSocket(record).path.utf8.count < 104 else { throw Problem(tr("系统临时目录的 Unix socket 路径过长")) }
         let receipt = root.appendingPathComponent("bridge-ready.json")
         if let data = try? Data(contentsOf: receipt), let old = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let pid = old["pid"] as? Int32, let token = old["token"] as? String, old["socket"] as? String == path.path, processIsBridge(pid, marker: root.path) {
             return ["socket": "/run/host-adb.sock", "token": token]
@@ -64,11 +64,11 @@ enum AndroidBridge {
         try process.run()
         for _ in 0..<100 {
             if let data = try? Data(contentsOf: receipt), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], object["socket"] as? String == path.path, object["token"] as? String == token { return ["socket": "/run/host-adb.sock", "token": token] }
-            if !process.isRunning { throw Problem("安卓 Unix socket 助手启动失败") }
+            if !process.isRunning { throw Problem(tr("安卓 Unix socket 助手启动失败")) }
             Thread.sleep(forTimeInterval: 0.05)
         }
         if process.isRunning { process.terminate() }
-        throw Problem("安卓 Unix socket 助手未就绪；不会改为开放网络监听")
+        throw Problem(tr("安卓 Unix socket 助手未就绪；不会改为开放网络监听"))
     }
     static func processIsBridge(_ pid: Int32, marker: String) -> Bool {
         guard pid > 1, Darwin.kill(pid, 0) == 0,

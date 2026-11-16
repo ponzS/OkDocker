@@ -1,41 +1,40 @@
-# Apple container 后端 · 0.3
+[中文](../zh/docs/APPLE-BACKEND.md)
 
-状态：0.2 本机验证版；验收结果单独记录，不能沿用 0.1 Docker 的通过结论。
+# Apple container backend
 
-## 决策与职责
+Status: local validation of the 0.2 runtime, with later versioned-deploy behavior. Results are recorded separately. A 0.1 Docker pass is not reused.
 
-按用户 2026-11-16 授权，默认运行时改为 Apple `container`，不再要求 Colima / Docker / Compose。继续使用原生 SwiftUI/AppKit；不重写官方 vminitd、VM 管理或镜像构建器。首版接入官方 CLI，而不是把整个官方运行时打包进应用。Apple container 仍通过 Containerization / Virtualization.framework 为每个容器启动独立 Linux VM。
+## Decision
 
-新增 `Sources/OkDocker/AppleRuntime.swift`：仅负责官方 CLI 协议、带所有权标签的容器/网络、构建、检查和启动。原 `Runtime.swift` 继续承担注册表、目录审批、启动/关闭互斥、取消与端口保护，并分发到对应后端；已有 Compose 代码仅作为旧登记的兼容和清理路径。不能用 Docker context 冒充 Apple 后端。
+On 2026-11-16 the default runtime became Apple `container`. Colima, Docker, and Compose are no longer required. The UI stays native SwiftUI/AppKit. Official vminitd, VM management, and the image builder are not rewritten. The first integration uses the official CLI rather than bundling the whole runtime. Apple container still starts an independent Linux VM per container through Containerization / Virtualization.framework.
 
-- 官方运行时固定验收 `1.7.1`，tag commit `a15b46097aa4c2325da13c1fb5192b9274aab083`；Apache-2.0。
-- 安装包：<https://github.com/apple/container/releases/download/1.7.1/container-1.7.1-installer-signed.pkg>
-- SHA256：`b6739caf3d47ca53a78f1a7edf32521420a75c7941838c3cefa75f30b80f5a97`。
-- 已通过 `pkgutil --check-signature`：Apple Inc. - Containerization (`UPBK2H6LZM`)，Apple 公证可信。正常系统安装器请求管理员批准，不去掉隔离属性或绕过系统授权。
-- 官方内核：Kata 4.3.1 ARM64，归档 SHA256 `2c5bf7cde334ad5307d482f45cceda496f91c9b6b96f5278c47f4f4eac1bbae6`。首次官方 URLSession 下载遇到 TLS 关闭；正常 TLS curl 重试并核对官方摘要后才本地安装，未跳过任何校验。
-- 最低 macOS 26 / Apple Silicon；镜像限定 Linux arm64，不默默启用 Rosetta。
+`Sources/OkDocker/AppleRuntime.swift` owns the official CLI protocol, ownership-labeled containers and networks, builds, checks, and start. `Runtime.swift` still owns the registry, directory approval, start/stop exclusion, cancellation, and port protection, and dispatches to the backend. Existing Compose code is only a compatibility and cleanup path for old registrations. A Docker context cannot impersonate the Apple backend.
 
-## 接口与迁移
+- The validated runtime is `1.7.1`, tag commit `a15b46097aa4c2325da13c1fb5192b9274aab083`, Apache-2.0.
+- Installer: <https://github.com/apple/container/releases/download/1.7.1/container-1.7.1-installer-signed.pkg>
+- SHA256: `b6739caf3d47ca53a78f1a7edf32521420a75c7941838c3cefa75f30b80f5a97`.
+- `pkgutil --check-signature` reported Apple Inc. - Containerization (`UPBK2H6LZM`), notarized by Apple. The normal system installer asks for administrator approval. Quarantine is not stripped and system authorization is not bypassed.
+- Official kernel: Kata 4.3.1 ARM64, archive SHA256 `2c5bf7cde334ad5307d482f45cceda496f91c9b6b96f5278c47f4f4eac1bbae6`. The first official URLSession download hit a TLS close. A normal TLS curl retry was checked against the official digest before local install. No check was skipped.
+- Minimum macOS 26 / Apple Silicon. Images are Linux arm64. Rosetta is not enabled silently.
 
-内部后端键为 `apple-container`；保留旧记录的 context，避免悄悄改变运行实例。注册表升级先备份，默认后端转为 Apple；旧应用的登录自动启动暂停。旧卡片明确标为待迁移，迁移只修改登记、保持自动启动关闭，不构建或启动服务，不搬运或删除数据。
+## Interface and migration
 
-迁移需要显式确认旧 Docker 实例已停止；若旧引擎可连接，还会核查实际 running=0。旧引擎不可连接不能自动断言旧容器已停止。迁移仅限管理器登记，不切换已有宿主部署或接管其数据；切换前须确认原服务已关闭。
+The internal backend key is `apple-container`. Old records keep their context so a running instance is not changed quietly. The registry upgrade saves a backup first and moves the default backend to Apple. Login startup for old apps is paused. Old cards are marked as needing migration. Migration changes only the registration, leaves login startup off, and does not build, start, move, or delete data.
 
-新的受控声明仍使用 schemaVersion 1，不接收额外 CLI 参数、任意 Compose、宿主命令、socket/USB 全设备映射或 SSH-agent/home 隐式共享。容器端口固定 127.0.0.1；0.2.1 增加用户单独授权的宿主 LAN 助手，不改容器配置、不重建可写层（详见 CONFIGURATION.md）。启动前及构建后检查真实 LISTEN，创建后审计官方 inspect 的实际挂载、网络、标签、端口。普通配置变更仍须在停止后重新导入审批；0.3 允许仅应用 `version` 变化时无缓存重建与切换。新镜像/停止态容器准备并审计通过后才停旧服务，原子选择新代际再启动；旧容器可写层和镜像保留，不静默删除。构建脚本通过 `build.script` 在 Dockerfile 的 Linux 阶段执行，不成为宿主命令钩子。完整版本/持久化语义见 CONFIGURATION.md 与 ARCHITECTURE.md。
+Migration requires an explicit confirmation that the old Docker instance is stopped. If the old engine is reachable, running must actually be 0. An unreachable old engine is not treated as proof that old containers have stopped. Migration is limited to the manager's registration. It does not switch an existing host deployment or take over its data. Confirm the original service is stopped before switching.
 
-每应用独立 vmnet 网络。官方自定义网络不提供 Compose 式裸服务名发现；不宣称任意多服务 Compose 等价。ADB 不依赖自定义网络 DNS 或动态 IP。已放弃不可绑定的 vmnet 网关监听方案，改用官方 Unix socket `.into` / `.outOf` 转发：私有 Mac 令牌 socket → sidecar → 私有回传 socket → 获准后端。没有 TCP 桥监听，不修改 PF / DNS / Private Relay。socket 路径位于当前用户临时目录下的 0700 应用子目录，避免 sockaddr_un 长度限制；只给已授权后端注入固定 socket，清理不涉及共享 ADB。
+The controlled declaration remains schemaVersion 1. Extra CLI arguments, arbitrary Compose, host commands, socket or full USB mapping, and implicit SSH-agent or home sharing are not accepted. Container ports stay on 127.0.0.1. A separately authorized host LAN helper does not change container configuration or rebuild a writable layer. See CONFIGURATION.md. Before start and after build, real LISTEN is checked. After create, official inspect is audited for mounts, network, labels, and ports. Ordinary configuration changes still require a stop and a new import. A version-only change rebuilds with no cache and switches. The new image and stopped container are prepared and audited before the old service stops. The new generation is selected atomically and then started. Old writable layers and images are kept and not deleted silently. `build.script` runs in a Linux Dockerfile stage and is not a host command hook.
 
-官方 `.outOf` relay 看不到 workload 额外 tmpfs 命名空间中的 socket，所以 sidecar 在其隔离 VM 的可写根创建 socket；drop ALL capabilities，令牌目录只读。关闭、重新启动可保留后端可写层且不受 VM IP 变化影响。ADB 开关仍不宣称已通过恶意程序强制隔离。
+Each app has its own vmnet network. Official custom networks do not provide Compose-style bare service-name discovery. Arbitrary multi-service Compose equivalence is not claimed. ADB does not depend on custom-network DNS or a dynamic IP. Listening on the vmnet gateway was abandoned because that gateway is not a bindable Mac interface. A new deployment mounts the Mac's private token socket into the approved backend container. A relay in that same container injects the token and serves a local Unix socket to the app. There is no TCP bridge listen and no PF / DNS / Private Relay change. The socket path is under a mode 0700 directory in the current user's temporary directory, to stay within `sockaddr_un` limits. An already created old sidecar is not rewritten in place. After a version switch succeeds, that VM is stopped. The Android switch still does not claim mandatory isolation from a malicious program.
 
-不强制逐应用填写 CPU/内存套餐，也不承诺无限弹性：官方 CLI 的 VM 启动容量及默认上限仍存在（1.7.1 默认 4 vCPU / 1 GiB），这不是固定宿主预占；guest 释放内存未必能归还 Mac。保留原始测量，不宣称一定比 Colima 更省资源。
+Per-app CPU and memory plans are not required, and unlimited elasticity is not promised. The official CLI still has a VM start capacity and default limit (1.7.1 defaults to 4 vCPU / 1 GiB). That is not a fixed host reservation. Memory freed by the guest may not return to the Mac. Older measurements are kept. This is not claimed to be lighter than Colima in every case.
 
-## 生命周期与验收门槛
+## Lifecycle and validation bar
 
-- 从真实 `container list --all --format json` 读取状态；HTTP 与挂载 I/O 分别确认。
-- 容器按应用 ID + 支持目录摘要标签归属，网络同样校验标签；不用 `--all` 删除/停止资源。观察/日志限定当前选中部署，关闭/移除覆盖该应用所有代际；应用版本与部署标识均写入标签。
-- 强制关闭发送 KILL；等待所有创建/启动客户端取消后再次核查，不删除容器可写层或宿主数据，不停共享运行时/ADB。
-- UI 退出不关闭服务；重开按实际状态恢复。登录项默认关闭。
-- 验收独立示例：导入/真实 Linux arm64/挂载与端口、SIGKILL、宿主与容器可写层持久化、两应用互不影响、旧记录显式迁移、配置变更、恶意环境/参数、占用端口、启动取消/孤儿客户端、真实 GUI 冷启动与文件/HTTP I/O。
-- 流水线只用 allowlist 源码快照、新 SQLite、无 Key 和业务数据、保持暂停；ADB 仅只读设备列表/属性测试。不真实发帖，不操作手机 UI。
+- State comes from real `container list --all --format json`. HTTP and mounted I/O are checked separately.
+- Containers belong to an app by app ID plus support-directory digest. Networks are label-checked the same way. `--all` is not used to delete or stop resources. Observation and logs use the selected deployment. Stop and remove cover every generation of that app. Application version and deployment id are labels.
+- Force stop sends KILL, waits until create and start clients are cancelled, and checks again. It does not delete container writable layers or host data, and it does not stop the shared runtime or ADB server.
+- Quitting the UI does not stop services. Reopening restores from actual state. Login items are off by default.
+- Independent examples cover import, real Linux arm64, mounts and ports, SIGKILL, host and container writable-layer persistence, two apps not affecting each other, explicit migration of an old record, configuration changes, hostile environment and arguments, a busy port, start cancellation and orphan clients, and a real GUI cold start with file and HTTP I/O.
 
-最终通过范围与未通过项在 `VALIDATION.md` 单独记录。旧 Docker 报告是历史证据，不算 Apple 后端验收。
+The pass and fail scope is recorded separately in `VALIDATION.md`. Old Docker reports are historical evidence, not Apple backend validation.

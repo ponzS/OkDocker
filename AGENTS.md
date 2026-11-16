@@ -1,14 +1,15 @@
-# OkDocker 工作约定
+[中文](zh/AGENTS.md)
 
-- 本目录是 OkDocker 唯一项目根目录；先读 README.md、CONFIGURATION.md 和 docs/ARCHITECTURE.md。
-- 产品是原生 macOS 菜单栏 + 启动器窗口，使用 SwiftUI/AppKit；不把其他 codebox 项目改成此项目的源码目录。
-- 默认后端是 Apple container 1.7.1 官方 CLI（macOS 26+ / Apple Silicon），不是 Colima/Docker context；CLI 适配不重写 vminitd。先读 docs/APPLE-BACKEND.md 与 docs/VALIDATION.md。旧 Docker 仅兼容观察、关闭、清理和显式迁移。
-- 管理器与具体应用业务无关，UI 与通用配置规则不放特定业务的提醒或控制逻辑。集成示例和隔离验收不得因此触发真实业务。
-- LAN 默认关闭，只由用户在每应用设置/CLI 显式授权，manifest 不自动授权。容器仍只发到 loopback；独立助手仅监听物理 en* 私有 IPv4，核验原本地发布进程，禁止转发已被其他服务复用的端口。不重建 VM 或静默改系统防火墙。
-- 默认仅授权导入应用目录；启动前审计实际 Apple inspect（旧 Docker 审计完整展开 Compose），拒绝越界挂载/构建、任意 socket、privileged、host PID/network、外部网络/卷等隐式越权。配置不是任意宿主 shell 脚本。只有显式安卓授权允许固定的私有 socket/只读配置目录例外。
-- 关闭应用按用户要求强制杀死该应用的容器，明确提示数据写入风险；不删除数据卷，不停止其他项目或共享 ADB。
-- 登录自启动默认关闭；启动 HTTP 服务不等于授权真实发帖。所有状态来自容器/HTTP实际观测，不伪造 ready。
-- 安卓接入是独立显式授权，只桥接 ADB，不承诺 Mac 全部硬件直通或完全隔离。不能开放无鉴权 ADB 到局域网。
-- 测试 xhs 流水线必须记录原状态、使用独立容器数据、不触发真实发布，结束恢复宿主模式。生产数据和密钥不进入 Git/镜像/日志。
-- 升级先备份注册表，不自动把旧登记当已迁移或已停止。同版本停止/启动保留可写层；应用 version 改变时先无缓存构建新镜像，停止旧部署后切换新容器，旧层保留不自动删除。版本以外配置变化仍须重新审批；持久数据显式挂载、升级前备份，不自动做数据回滚。build.script 只能在 Dockerfile 的 Linux 构建阶段执行，不能变成任意宿主 shell 钩子。
-- 依赖锁定，记录来源与许可证；未实际运行验证的能力不能标为通过。系统本地网络/目录授权须用户正常批准，不改 TCC/PF 绕过；不能把“Running”当网页与挂载就绪。
+# OkDocker working agreements
+
+- This directory is the only OkDocker project root. Read README.md, CONFIGURATION.md, and docs/ARCHITECTURE.md first.
+- The product is a native macOS menu bar and launcher window, using SwiftUI/AppKit. Do not turn other codebox projects into this project's source tree.
+- The default backend is the official Apple container 1.7.1 CLI (macOS 26+ / Apple Silicon), not a Colima/Docker context. The CLI adapter does not rewrite vminitd. Read docs/APPLE-BACKEND.md and docs/VALIDATION.md. Legacy Docker remains only for observation, stop, cleanup, and explicit migration.
+- The manager is independent of any particular application's business. The UI and generic configuration rules do not contain reminders or controls for a specific product. Examples and isolated checks must not trigger real external actions.
+- LAN access is off by default and is granted only from per-app settings or the CLI. A manifest cannot grant it. Containers still publish only to loopback. The helper listens only on physical `en*` private IPv4, checks the original local publisher, and refuses a port another service has reused. It does not rebuild a VM or silently change the system firewall.
+- Import approves only the application directory. Before start, audit the real Apple inspect output (legacy Docker audits the fully expanded Compose model). Reject out-of-scope mounts or builds, arbitrary sockets, privileged mode, host PID/network, external networks or volumes, and other implicit privilege. Configuration is not an arbitrary host shell script. Only an explicit Android grant may inject the fixed private socket, read-only token directory, and relay.
+- Force stop kills that app's containers and says that writes can be interrupted. It does not delete data volumes, stop other projects, or stop the shared ADB server.
+- Login startup is off by default. An HTTP server being up is not permission to perform the app's real external actions. Status comes from containers and HTTP observation. Do not fake ready.
+- Android access is a separate explicit grant. It only bridges ADB. It does not promise passthrough of every Mac device or complete isolation. Do not publish unauthenticated ADB to the LAN.
+- Back up the registry before an upgrade. Do not treat an old registration as migrated or stopped automatically. Same-version stop/start keeps the writable layer. A version change builds a fresh image with no cache, stops the old deployment, and switches to the new container. Old layers are kept and not deleted automatically. Any change other than version still needs a new approval. Persist data with an explicit mount and back it up before upgrading. There is no automatic data rollback. `build.script` runs only in a Linux Dockerfile stage and must not become an arbitrary host shell hook.
+- Lock dependencies and record their source and license. Do not mark an unverified capability as passed. Local Network and folder prompts must be approved normally. Do not bypass TCC or PF. Running is not proof that the page and mounts are ready.

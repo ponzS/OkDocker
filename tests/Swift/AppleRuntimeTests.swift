@@ -83,5 +83,19 @@ final class AppleRuntimeTests: XCTestCase {
     func testActualDroppedCapabilitiesRequired() throws { let (v, r) = try fixture(); XCTAssertThrowsError(try audit(mutate("capDrop", [], actual(v, r)), v, r)) }
     func testActualAlternativeRuntimeRejected() throws { let (v, r) = try fixture(); XCTAssertThrowsError(try audit(mutate("runtimeHandler", "other-runtime", actual(v, r)), v, r)) }
     func testActualAlternativePlatformRejected() throws { let (v, r) = try fixture(); XCTAssertThrowsError(try audit(mutate("platform", ["architecture": "amd64", "os": "linux"], actual(v, r)), v, r)) }
+    func testInContainerRelayStaysInsideTheBackendContainer() throws {
+        let (v, r) = try fixture()
+        let guest = AppleRuntime.AndroidGuest(directory: "/tmp/okdocker-guest", hostSocket: "/tmp/okdocker.sock", command: ["python3", "-m", "http.server"])
+        let args = try AppleRuntime.createArguments(r, service: "app", spec: v.manifest.services["app"]!, validated: v, image: "example/app:1", extraEnvironment: ["ADB_SERVER_SOCKET": AppleRuntime.adbSocketEnv], androidGuest: guest)
+        XCTAssertTrue(args.contains("--entrypoint")); XCTAssertTrue(args.contains(AppleRuntime.relayExecutable))
+        XCTAssertTrue(args.contains("ADB_SERVER_SOCKET=" + AppleRuntime.adbSocketEnv))
+        XCTAssertFalse(args.contains("--publish-socket")); XCTAssertFalse(args.contains("okdocker-adb"))
+        XCTAssertEqual(Array(args.suffix(7)), ["example/app:1", "--config", AppleRuntime.relayConfigPath, "--", "python3", "-m", "http.server"])
+    }
+    func testNewContainerDoesNotUseTheLegacyPeerSocket() throws {
+        let (v, r) = try fixture()
+        let args = try AppleRuntime.createArguments(r, service: "app", spec: v.manifest.services["app"]!, validated: v, image: "example/app:1")
+        XCTAssertFalse(args.contains("--entrypoint")); XCTAssertFalse(args.joined(separator: "\n").contains("/run/okdocker-adb.sock"))
+    }
     func testUnexpectedJSONShapeRejected() { XCTAssertThrowsError(try AppleRuntime.array("{}")); XCTAssertThrowsError(try AppleRuntime.array("warning\n[]")) }
 }

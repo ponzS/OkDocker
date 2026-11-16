@@ -120,7 +120,7 @@ try:
  foreign=http.server.ThreadingHTTPServer(('127.0.0.1',p1),Foreign);threading.Thread(target=foreign.serve_forever,daemon=True).start()
  check('loopback port reuse cannot expose unrelated service',inaccessible(host,p1))
  check('foreign service itself remains untouched',request('127.0.0.1',p1)==b'FOREIGN-SECRET')
- check('copied rules source is complete and generic','schemaVersion' in cli('rules').stdout and '小红书' not in cli('rules').stdout)
+ check('copied rules source is complete and generic','schemaVersion' in cli('rules').stdout and 'hostAndroidDevices' in cli('rules').stdout and 'Allow LAN access' in cli('rules').stdout)
  REPORT['passed']=True
 except Exception as e:REPORT['passed']=False;REPORT['error']=repr(e);raise
 finally:

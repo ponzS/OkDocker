@@ -29,12 +29,12 @@ import Darwin
         print(String(decoding: try encoder.encode(object), as: UTF8.self))
     }
     @MainActor static func cli(_ args: [String]) throws {
-        guard let action = args.first else { throw Problem("用法：--cli validate/import/list/start/close/status/deployments/lan/rules/autostart/forget/context/engine") }
+        guard let action = args.first else { throw Problem(tr("用法：--cli validate/import/list/start/close/status/deployments/lan/rules/autostart/forget/context/engine")) }
         let operand = args.count > 1 ? args[1] : ""
         switch action {
         case "validate":
-            let v = try validate(root: URL(fileURLWithPath: operand)); print("有效：\(v.manifest.name)；前端 \(v.manifest.frontend.url)；服务端 \(v.manifest.backend.url)；安卓 \(v.manifest.hostAndroidDevices == true ? "开放" : "关闭")")
-        case "context": try Runtime.localContext(operand); try Runtime.transaction { $0.context = operand }; print("已选择 \(operand)")
+            let v = try validate(root: URL(fileURLWithPath: operand)); print(L("Valid: \(v.manifest.name); frontend \(v.manifest.frontend.url); backend \(v.manifest.backend.url); Android \(v.manifest.hostAndroidDevices == true ? "on" : "off")", "有效：\(v.manifest.name)；前端 \(v.manifest.frontend.url)；服务端 \(v.manifest.backend.url)；安卓 \(v.manifest.hostAndroidDevices == true ? "开放" : "关闭")"))
+        case "context": try Runtime.localContext(operand); try Runtime.transaction { $0.context = operand }; print(L("Selected \(operand)", "已选择 \(operand)"))
         case "engine": print(try Runtime.engine(operand.isEmpty ? Runtime.load().context : operand))
         case "engine-start": print(try AppleRuntime.startEngine())
         case "migrate": print(try Runtime.migrateToApple(Runtime.record(operand), confirmOldStopped: args.contains("--confirm-old-stopped")))
@@ -51,7 +51,7 @@ import Darwin
             print(String(describing: service.status))
         case "login-self-test":
             let service = SMAppService.mainApp
-            guard ![SMAppService.Status.enabled, .requiresApproval].contains(service.status) else { throw Problem("登录项已有设置，不自动改动；请手动验证") }
+            guard ![SMAppService.Status.enabled, .requiresApproval].contains(service.status) else { throw Problem(tr("登录项已有设置，不自动改动；请手动验证")) }
             defer { try? service.unregister() }
             try service.register()
             let registered = service.status
@@ -65,12 +65,12 @@ import Darwin
         case "list": try printJSON(Runtime.load().apps)
         case "start": print(try Runtime.start(Runtime.record(operand)))
         case "close":
-            guard args.contains("--force") else { throw Problem("关闭会发送 SIGKILL，需显式加 --force；不删除数据") }
+            guard args.contains("--force") else { throw Problem(tr("关闭会发送 SIGKILL，需显式加 --force；不删除数据")) }
             print(try Runtime.forceStop(Runtime.record(operand)))
         case "status": try printJSON(Runtime.observe(Runtime.record(operand)))
         case "deployments":
             let record = try Runtime.record(operand)
-            guard record.context == AppleRuntime.context else { throw Problem("部署历史仅支持 Apple container 后端") }
+            guard record.context == AppleRuntime.context else { throw Problem(tr("部署历史仅支持 Apple container 后端")) }
             try printJSON(AppleRuntime.deployments(record))
         case "lan":
             guard args.count == 3, ["on", "off", "status"].contains(args[2]) else { throw Problem("lan ID on|off|status") }
@@ -83,11 +83,11 @@ import Darwin
             let enabled = args[2] == "on"
             if enabled {
                 if ![SMAppService.Status.enabled, .requiresApproval].contains(SMAppService.mainApp.status) { try SMAppService.mainApp.register() }
-                guard SMAppService.mainApp.status == .enabled else { throw Problem("需要用户在系统登录项设置中批准 OkDocker，未开启应用自动启动") }
+                guard SMAppService.mainApp.status == .enabled else { throw Problem(tr("需要用户在系统登录项设置中批准 OkDocker，未开启应用自动启动")) }
             }
-            try Runtime.autostart(Runtime.record(operand), enabled: enabled); print(enabled ? "已开启登录启动" : "已关闭登录启动")
-        case "forget": try Runtime.remove(Runtime.record(operand)); print("已移除登记，目录和数据保留")
-        default: throw Problem("未知命令：\(action)")
+            try Runtime.autostart(Runtime.record(operand), enabled: enabled); print(enabled ? tr("已开启登录启动") : tr("已关闭登录启动"))
+        case "forget": try Runtime.remove(Runtime.record(operand)); print(tr("已移除登记，目录和数据保留"))
+        default: throw Problem(L("Unknown command: \(action)", "未知命令：\(action)"))
         }
     }
 }
@@ -97,6 +97,7 @@ import Darwin
     var window: NSWindow!
     var item: NSStatusItem!
     var popover: NSPopover!
+    var menuLanguage = LanguageSettings.code
     private var lockFD: Int32 = -1
     func applicationDidFinishLaunching(_ notification: Notification) {
         do { try Runtime.prepare() } catch { NSApp.terminate(nil); return }
@@ -106,7 +107,7 @@ import Darwin
             NSApp.terminate(nil); return
         }
         do { try Runtime.upgradeBackendDefault() } catch {
-            let alert = NSAlert(); alert.messageText = "注册表迁移未完成"; alert.informativeText = error.localizedDescription; alert.runModal(); NSApp.terminate(nil); return
+            let alert = NSAlert(); alert.messageText = tr("注册表迁移未完成"); alert.informativeText = error.localizedDescription; alert.runModal(); NSApp.terminate(nil); return
         }
         model = AppModel()
         setupMenu()
@@ -124,11 +125,18 @@ import Darwin
         if let button = item.button {
             let image = NSImage(systemSymbolName: "shippingbox.fill", accessibilityDescription: "OkDocker")
             image?.isTemplate = true; button.image = image; button.target = self; button.action = #selector(togglePopover)
-            button.toolTip = "OkDocker · Apple container 应用启动器"
+            button.toolTip = tr("OkDocker · Apple container 应用启动器")
         }
         popover = NSPopover(); popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: MenuPanel(model: model, openWindow: { [weak self] in self?.showLauncher() }))
-        model.changed = { [weak self] in self?.item.button?.toolTip = "OkDocker · \(self?.model.runningCount ?? 0) 个应用运行中" }
+        model.changed = { [weak self] in
+            guard let self else { return }
+            if self.menuLanguage != LanguageSettings.code {
+                self.menuLanguage = LanguageSettings.code
+                self.setupMenu()
+            }
+            self.item.button?.toolTip = L("OkDocker · \(self.model.runningCount) apps running", "OkDocker · \(self.model.runningCount) 个应用运行中")
+        }
         model.showWindow = { [weak self] in self?.showLauncher() }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showFromNotification), name: Notification.Name("dev.okdocker.show"), object: nil)
         if !CommandLine.arguments.contains("--background") { window.center(); showLauncher() }
@@ -184,17 +192,17 @@ import Darwin
     func setupMenu() {
         let menu = NSMenu()
         let appRoot = NSMenuItem(); let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关于 OkDocker", action: #selector(about), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("关于 OkDocker"), action: #selector(about), keyEquivalent: "")
         appMenu.addItem(.separator())
-        let show = appMenu.addItem(withTitle: "打开启动器", action: #selector(showFromNotification), keyEquivalent: "1"); show.target = self
-        let importItem = appMenu.addItem(withTitle: "添加应用…", action: #selector(importApp), keyEquivalent: "o"); importItem.target = self
-        let settings = appMenu.addItem(withTitle: "设置…", action: #selector(settings), keyEquivalent: ","); settings.target = self
+        let show = appMenu.addItem(withTitle: tr("打开启动器"), action: #selector(showFromNotification), keyEquivalent: "1"); show.target = self
+        let importItem = appMenu.addItem(withTitle: tr("添加应用…"), action: #selector(importApp), keyEquivalent: "o"); importItem.target = self
+        let settings = appMenu.addItem(withTitle: tr("设置…"), action: #selector(settings), keyEquivalent: ","); settings.target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "隐藏 OkDocker", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "退出 OkDocker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: tr("隐藏 OkDocker"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: tr("退出 OkDocker"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appRoot.submenu = appMenu; menu.addItem(appRoot)
-        let editRoot = NSMenuItem(); let edit = NSMenu(title: "编辑")
-        for (title, action, key) in [("撤销", "undo:", "z"), ("剪切", "cut:", "x"), ("拷贝", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { edit.addItem(withTitle: title, action: Selector(action), keyEquivalent: key) }
+        let editRoot = NSMenuItem(); let edit = NSMenu(title: tr("编辑"))
+        for (title, action, key) in [(tr("撤销"), "undo:", "z"), (tr("剪切"), "cut:", "x"), (tr("拷贝"), "copy:", "c"), (tr("粘贴"), "paste:", "v"), (tr("全选"), "selectAll:", "a")] { edit.addItem(withTitle: title, action: Selector(action), keyEquivalent: key) }
         editRoot.submenu = edit; menu.addItem(editRoot); NSApp.mainMenu = menu
     }
     @objc func togglePopover() {
@@ -204,7 +212,7 @@ import Darwin
     @objc func showFromNotification() { showLauncher() }
     @objc func importApp() { showLauncher(); model.importPanel() }
     @objc func settings() { showLauncher(); NotificationCenter.default.post(name: .okdockerSettings, object: nil) }
-    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "OkDocker", .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版", .credits: NSAttributedString(string: "Apple container 原生应用启动器\n默认仅开放应用目录 · 安卓接入显式授权\n强制关闭会中断任务与写入。")]) }
+    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "OkDocker", .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? tr("开发版"), .credits: NSAttributedString(string: L("Native Apple container app launcher\nOnly the application directory is exposed by default. Android access is an explicit grant.\nForce stop interrupts work and writes.", "Apple container 原生应用启动器\n默认仅开放应用目录 · 安卓接入显式授权\n强制关闭会中断任务与写入。"))]) }
     func showLauncher() { popover?.performClose(nil); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showLauncher(); return true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

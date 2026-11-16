@@ -1,42 +1,44 @@
-# 架构与边界 · 0.3
+[中文](../zh/docs/ARCHITECTURE.md)
 
-默认链路是 **OkDocker → Apple container 1.7.1 CLI → 官方 Containerization / Virtualization.framework**。每容器独立 Linux VM；不是 Colima 中运行 Docker，也没有将 Linux 容器伪装成 macOS 原生进程。官方运行时单独签名安装，不内嵌未签名服务，不重写 vminitd。
+# Architecture and boundaries
 
-## 模块职责
+The default path is **OkDocker → Apple container 1.7.1 CLI → official Containerization / Virtualization.framework**. Each container is its own Linux VM. This is not Docker inside Colima, and Linux containers are not disguised as native macOS processes. The official runtime is installed separately and signed. Unsigned services are not embedded, and vminitd is not rewritten.
 
-- `Models.swift`：schemaVersion 1、目录审批/路径约束与配置摘要。未知权限、越界、特殊文件、非法端口/URL 均拒绝。
-- `Runtime.swift`：唯一注册表、原子写入、默认后端升级/备份、显式迁移、启动/关闭锁、取消标记及实际端口占用保护。按登记的后端分发。旧 Compose 代码只保留兼容关闭/观察/清理和 CLI 显式使用，不作为默认路径。
-- `AppleRuntime.swift`：新增的官方 CLI 适配。负责参数数组、OCI 构建/镜像、带标签的容器与网络、inspect 审计、实际状态和 KILL。现有 Docker/Compose 接线无法承接 Apple 的 XPC/CLI 与每容器 VM 语义，所以分离此适配，不复制注册表和策略锁。
-- `VersionDeployment.swift`：版本变化时准备新镜像/停止态容器、保留旧层、停止旧服务并原子选择新部署。复用 Runtime 的唯一操作锁/取消与 AppleRuntime 的启动/审计，不复制生命周期状态机；从适配器分离以避免镜像准备、数据保留与注册表提交交织。
-- `BuildRecipe.swift`：官方构建器没有项目脚本钩子，因此仅在私有临时 Dockerfile 的指定阶段注入脚本 RUN，保留原 context 与 Dockerfile 专属 ignore；不修改原文件、不执行宿主 shell。
-- `AppModel.swift`：异步编排、采样、独立 HTTP 就绪探针、SMAppService。旧卡片显式迁移，不能因换默认后端悄悄启动另一份部署。
-- `Views.swift` / `Entry.swift`：SwiftUI/AppKit 启动器、菜单栏、导入审批、设置及 CLI。主线程不执行镜像构建或 Docker/Apple CLI。
-- `LANAccess.swift`：用户独立授权的宿主 TCP 入口与进程身份检查；只转发指定应用的已审批前后端 loopback 端口到当前私有 Wi-Fi/以太网 IPv4。独立助手在 UI 退出后保留，开关/关闭仅影响自己的入口。直接改 Apple 发布参数需替换现有容器并丢失未挂载可写层，所以不能由原部署适配承担；不为此修改配置摘要或重建 VM。
-- `AndroidBridge.swift`：每应用独立令牌助手。Apple 路径只监听当前用户私有临时目录的 Unix socket；legacy Docker 保留 loopback TCP 模式。共享 Mac ADB 仍只在原 `127.0.0.1:5037`，不转移 USB/ADB 凭据。
-- `Resources/Android`：私有 Python sidecar，复用官方 `.into` socket 挂载和 `.outOf` 发布；固定的另一条 Unix socket 接入获准后端。后端地址 `localfilesystem:/run/okdocker-adb.sock` 不随 VM IP 改变。不开放手机桥 TCP，也不改 PF/DNS/Private Relay。
-- `integrations/`：其他应用的部署模板和只含允许源码的构建暂存；业务源码与真实数据不迁入管理器。
-- `scripts/install-app.py`：显式本机升级、旧包备份与原子替换；与只构建 dist 的脚本分开，避免每次打包悄悄替换运行中的应用。既不修改登录设置，也不启停运行时/容器或清除系统隔离属性。
+## Modules
 
-## 生命周期与持久化
+- `Models.swift`: schemaVersion 1, directory approval, path limits, and the configuration digest. Unknown permissions, escapes, special files, and illegal ports or URLs are rejected.
+- `Runtime.swift`: the single registry, atomic writes, default-backend upgrade and backup, explicit migration, start/stop locks, cancellation, and real port-occupancy checks. It dispatches by the registered backend. Old Compose code remains only for compatible stop, observation, cleanup, and explicit CLI use. It is not the default path.
+- `AppleRuntime.swift`: the official CLI adapter. It owns argument arrays, OCI build and images, labeled containers and networks, inspect audits, actual state, and KILL. The old Docker/Compose wiring cannot carry Apple's XPC/CLI or per-container VM semantics, so this adapter is separate. It does not copy the registry or policy locks.
+- `VersionDeployment.swift`: on a version change, prepare a new image and stopped containers, keep old layers, stop the old service, and atomically select the new deployment. It reuses Runtime's operation lock and cancellation and AppleRuntime's start and audit. It does not copy the lifecycle state machine.
+- `BuildRecipe.swift`: the official builder has no project script hook, so a script `RUN` is injected only into a named stage of a private temporary Dockerfile. The original context and Dockerfile-specific ignore are kept. The original file is not modified and no host shell runs.
+- `AppModel.swift`: async orchestration, sampling, an independent HTTP readiness probe, and `SMAppService`. Old cards migrate only when asked. Changing the default backend must not quietly start another deployment.
+- `Views.swift` / `Entry.swift`: SwiftUI/AppKit launcher, menu bar, import approval, settings, and CLI. The main thread does not build images or run Docker/Apple CLI. The window language defaults to English and can switch to Chinese.
+- `L10n.swift`: English-by-default UI strings and the saved language preference.
+- `LANAccess.swift`: a separately authorized host TCP gateway and publisher identity check. It forwards only the approved frontend and backend loopback ports to the current private Wi-Fi/Ethernet IPv4. The helper remains after the UI quits. The switch and stop affect only that gateway. Changing Apple publish arguments would replace the container and lose an unmounted writable layer, so this path does not do that and does not change the configuration digest or rebuild a VM.
+- `AndroidBridge.swift`: a per-app token helper. The Apple path listens only on a Unix socket in the current user's private temporary directory. Legacy Docker keeps loopback TCP. The shared Mac ADB server stays at `127.0.0.1:5037`. USB and ADB credentials are not transferred.
+- `Resources/Android`: a static Linux arm64 relay. A newly created Apple backend container starts it as the entrypoint, listens on `/run/okdocker-adb.sock` in that container, writes the token, and execs the image command. The address does not follow the VM IP. There is no phone-bridge TCP listener and no PF/DNS/Private Relay change. The old sidecar remains only for containers that were already created that way.
+- `scripts/install-app.py`: an explicit local upgrade. It backs up the old bundle and replaces it atomically. It is separate from the dist-only build so packaging does not quietly replace a running app. It does not change login settings, start or stop the runtime or containers, or clear quarantine.
 
-关闭窗口保留菜单栏；退出 UI 保留服务。重开从 `container list --all --format json` 恢复实际状态，再检查 HTTP。Running 不是目录/网页/ADB 都健康的证明。
+## Lifecycle and persistence
 
-每应用使用唯一项目名及应用 ID + support 路径摘要标签；网络同样校验所有权。停止/删除不使用 `--all`。强制关闭发送 KILL，撤销该项目启动/构建客户端，等待启动锁，再核查实际 running=0；不停止共享引擎、构建器或 ADB。官方 `container build` 会 exec 为 build 插件，孤儿取消必须匹配该插件路径及项目/支持目录标签，不能只找 `container build` 进程名。
+Closing the window keeps the menu bar. Quitting the UI keeps services. Reopening reads `container list --all --format json` and then checks HTTP. Running is not proof that directories, the page, and ADB are healthy.
 
-应用 `version` 与 `schemaVersion:1` 独立。同版本停止/启动复用原容器；新版本先为所有应用服务使用唯一部署名/镜像标签，以 `--no-cache --pull` 构建，或对 image 服务重新 pull。新容器创建后审计、保持停止；旧服务先 SIGTERM（上游 30 秒超时后 KILL），确认停止及端口空闲后，原子提交 `AppRecord.deployment` / `manifestVersion` / `manifestHash`，然后通过原有启动路径激活。没有旧新服务并行写挂载目录的切换窗口，构建失败不停止旧服务。
+Each app uses a unique project name and labels for the app ID plus the support-path digest. Networks are ownership-checked the same way. Stop and delete do not use `--all`. Force stop sends KILL, cancels that project's start and build clients, waits for the start lock, and checks that running is actually 0. It does not stop the shared engine, builder, or ADB server. Official `container build` execs into the build plugin. Cancelling an orphan must match that plugin path and the project/support-directory labels, not only the `container build` process name.
 
-提交前中断只留下停止态候选；提交后中断，下次启动继续选中的新代际。所有版本的旧容器可写层/镜像保留，私有 deployments 文件夹保存切换前登记，CLI deployments 读取实际状态。选中代际用于观察、日志、LAN 发布者识别，关闭和移除则遍历同应用/同支持目录的所有拥有资源；不遗漏旧代际。ADB 固定 sidecar/Unix 通道可跨应用版本复用。新容器不继承旧可写层；挂载数据继续使用但不是快照，不做自动数据回滚。移除会删除所有代际未挂载可写层，宿主目录不动。
+Application `version` is independent of `schemaVersion: 1`. Same-version stop/start reuses the container. A new version gives every application service a unique deployment name and image tag, builds with `--no-cache --pull`, or pulls an `image` service again. The new container is audited and left stopped. The old service gets SIGTERM, then the upstream kill after 30 seconds. After it has stopped and the port is free, `AppRecord.deployment`, `manifestVersion`, and `manifestHash` are committed atomically, and the existing start path activates the new deployment. There is no window where old and new services write the same mounted directory. A failed build does not stop the old service.
 
-AppRecord 新字段均可选，兼容旧注册表；格式仍为 2，首次运行先保存 registry-before-versions.json 私有备份，不重置登录/LAN 偏好。`approvalHash` 对规范化 Manifest 排除 version 后编码摘要；其余所有字段仍为审批整体。只有版本可变化时复用授权，运行时 LAN/autostart 许可不受部署提交覆盖。旧基线仅在原摘要仍匹配时补齐，无法验证则须显式重新导入；同版本但实际配置摘要不一致仍拒绝。长时间构建后重查配置、版本、登记和取消标记；不把修改源码本身当成版本检测或文件系统快照。
+Interruption before commit leaves a stopped candidate. Interruption after commit resumes the selected generation on the next start. Writable layers and images from every version are kept. A private deployments folder stores the registration from before the switch. CLI deployments reads actual state. The selected generation is used for observation, logs, and LAN publisher identity. Stop and remove walk every owned resource for that app and support directory, including old generations. A new version starts the ADB relay inside the new backend container. An old sidecar VM is stopped after the new deployment succeeds and is not deleted automatically. A new container does not inherit the old writable layer. Mounted data continues to be used but is not a snapshot. There is no automatic data rollback. Removal deletes unmounted writable layers from every generation. The host directory stays.
 
-局域网许可保存在 `AppRecord.lanAccess`（可选字段，缺失即关闭），不接受来自导入 manifest 的自动授权。新增 `--cli lan ID on|off|status`；新连接核查原发布者 PID、启动时间、命令与 loopback LISTEN，拒绝复用其他服务的端口。私有地址变动重新绑定并断开旧连接；不保证公网转发设备或其他代理的安全性，认证由应用实现。关闭入口不改容器，停止容器先关闭入口，防止迟到转发。
+New `AppRecord` fields are optional and compatible with old registries. The format remains 2. The first run saves a private `registry-before-versions.json` backup and does not reset login or LAN preferences. `approvalHash` is a digest of the canonical manifest with `version` excluded. Every other field remains part of the approval. Only a version change reuses an approval. Runtime LAN and autostart permissions are not overwritten by a deployment commit. An old baseline is filled in only when the original digest still matches. Otherwise an explicit reimport is required. The same version with a different actual configuration digest is still rejected. After a long build, configuration, version, registration, and the cancel marker are checked again. Editing source is not itself version detection or a filesystem snapshot.
 
-## 信任与边界
+LAN permission is stored in optional `AppRecord.lanAccess`. Missing means off. An imported manifest cannot grant it. `--cli lan ID on|off|status` checks the original publisher PID, start time, command, and loopback LISTEN on each new connection, and refuses a port another service has reused. A private-address change rebinds and drops old connections. Public-network devices and other proxies are not promised safe. Authentication belongs to the app. Closing the gateway does not change the container. Stopping the container closes the gateway first, so a late forward cannot land.
 
-CLI 不经 shell，不继承 `CONTAINER_*` / Docker 端点覆盖，不读取应用 `.env`。只传明确目录、平台、网络、端口、命令与完整 `KEY=value`；`build.script` 相对构建 context 的普通文件，Dockerfile 的唯一独立标记被替换为 JSON exec 形式的 Linux shebang 解释器与相对脚本路径（无 shebang 时 `/bin/sh ./相对路径`），仅在 Linux 构建阶段执行，COPY/WORKDIR/工具链和最终运行镜像由项目声明；源目录/目标含 CLI 分隔字符则拒绝。创建完成、启动之前审计实际配置，不把命令成功当成已授权。
+## Trust boundary
 
-应用不能提交 privileged、外部网络/卷、host PID/network、socket/设备、SSH/home 共享或自定义内核/运行时。Apple 接线不支持的单文件绑定不会偷偷扩大为对父目录的授权。ADB 的两个固定私有 socket 与只读配置目录仅在显式授权后注入。sidecar drop ALL capabilities；为发布 Unix socket 使用隔离 VM 的可写根，而不是 workload 私有 tmpfs（官方 outOf 转发无法看到该命名空间）。宿主只读配置不因此改成可写。
+The CLI is not invoked through a shell. It does not inherit `CONTAINER_*` or Docker endpoint overrides, and it does not read an application `.env`. Only explicit directories, platform, network, ports, commands, and complete `KEY=value` pairs are passed. `build.script` is an ordinary file relative to the build context. The Dockerfile's single independent marker is replaced with a JSON exec form of the Linux shebang interpreter and relative script path (`/bin/sh ./relative` when there is no shebang). It runs only in a Linux build stage. `COPY`, `WORKDIR`, the toolchain, and the final image come from the project. A source or target containing a CLI separator is rejected. After create and before start, the actual configuration is audited. A successful command is not treated as approval.
 
-同 UID 的恶意宿主程序、宿主管理员和有权控制官方运行时的人不在防御范围；并发路径替换也不是已完成强沙箱。每应用独立 vmnet 不等于完整出站防火墙。安卓仍只支持可信代码，不用历史 Colima 旁路结果冒充 Apple 网络验证。
+An application cannot request privileged mode, external networks or volumes, host PID/network, sockets or devices, SSH/home sharing, or a custom kernel or runtime. An unsupported single-file bind is not widened into permission for the parent directory. The ADB host socket, read-only token directory, and relay are injected into the approved backend container only after an explicit grant. An old sidecar must still drop all capabilities. The host token directory stays read-only.
 
-不强制用户填写资源配额，但官方 VM 默认容量及构建器资源仍存在。没有重写弹性资源管理，也不承诺活跃 guest 释放内存必定归还 Mac。详见 [迁移决策](APPLE-BACKEND.md) 与 [分后端验证记录](VALIDATION.md)。
+A malicious host program running as the same UID, a host administrator, and anyone who can control the official runtime are outside this defense. Concurrent path replacement is not a completed strong sandbox. A per-app vmnet is not a complete outbound firewall. Android support is for trusted code. Historical Colima bypass results are not presented as Apple network validation.
+
+Users are not required to fill in resource quotas, but the official VM default capacity and builder resources still exist. Elastic resource management is not rewritten, and an active guest is not promised to return freed memory to the Mac. See [backend decision](APPLE-BACKEND.md) and [validation notes](VALIDATION.md).

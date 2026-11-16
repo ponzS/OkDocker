@@ -108,7 +108,8 @@ try:
     lan = json.loads(cli('lan',a['id'],'status').stdout)
     with urllib.request.urlopen(f'http://{lan["addresses"][0]}:{p}/',timeout=5) as r:
         check('authorized LAN gateway follows the new container publisher', r.read().decode()=='version-a-v2')
-    check('ADB transport restored without exposing a TCP port', adb_probe(second['id']) and not inspect(a['project']+'-okdocker-adb')['configuration']['publishedPorts'])
+    ports=inspect(second['id'])['configuration'].get('publishedPorts') or []
+    check('ADB transport restored without exposing an ADB TCP port', adb_probe(second['id']) and all(p.get('containerPort')!=5037 for p in ports))
     # Manifest is excluded from context. Only its version changes: a new UUID proves RUN is not cached.
     m['version']='2.0.1'; save(root,m); cli('start',a['id'],timeout=600); third = active(a); third_build=payload(p)
     check('version-only update bypasses build cache', third_build!=second_build and third['id']!=second['id'])

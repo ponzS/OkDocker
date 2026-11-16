@@ -25,11 +25,11 @@ struct Runtime {
     static func find(_ name: String) throws -> String {
         let paths = ["/opt/homebrew/bin", "/usr/local/bin", "/Applications/Docker.app/Contents/Resources/bin", "/Applications/OrbStack.app/Contents/MacOS/xbin"] + (ProcessInfo.processInfo.environment["PATH"] ?? "").components(separatedBy: ":")
         for dir in paths where FileManager.default.isExecutableFile(atPath: dir + "/" + name) { return dir + "/" + name }
-        throw Problem(name == "container" ? "未安装 Apple container。请从 Apple 官方 Releases 安装 1.7.1 签名安装包，再点击启动运行时。" : "未找到 \(name)。旧 Docker 后端需要原来的 CLI；新应用请使用 Apple container。")
+        throw Problem(name == "container" ? L("Apple container is not installed. Install the signed 1.7.1 package from Apple's official Releases, then start the runtime.", "未安装 Apple container。请从 Apple 官方 Releases 安装 1.7.1 签名安装包，再点击启动运行时。") : L("\(name) was not found. The legacy Docker backend needs its original CLI; new apps should use Apple container.", "未找到 \(name)。旧 Docker 后端需要原来的 CLI；新应用请使用 Apple container。"))
     }
     static func command(_ program: String, _ args: [String], timeout: TimeInterval = 60, cwd: URL? = nil, allowFailure: Bool = false) throws -> CommandResult {
         try prepare()
-        if let cancellation, FileManager.default.fileExists(atPath: cancellation.path) { throw Problem("启动已取消") }
+        if let cancellation, FileManager.default.fileExists(atPath: cancellation.path) { throw Problem(tr("启动已取消")) }
         let temp = support.appendingPathComponent("command-\(UUID().uuidString).log")
         FileManager.default.createFile(atPath: temp.path, contents: nil, attributes: [.posixPermissions: 0o600])
         let handle = try FileHandle(forWritingTo: temp)
@@ -55,8 +55,8 @@ struct Runtime {
             process.terminate(); Thread.sleep(forTimeInterval: 0.2)
             if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
             process.waitUntilExit()
-            if cancelled { throw Problem("启动已取消") }
-            throw Problem("操作超时（\(Int(timeout)) 秒）。请查看运行时的实际状态，不能据此认定容器已停止。")
+            if cancelled { throw Problem(tr("启动已取消")) }
+            throw Problem(L("The operation timed out after \(Int(timeout)) seconds. Check the runtime's actual state; this does not prove the container has stopped.", "操作超时（\(Int(timeout)) 秒）。请查看运行时的实际状态，不能据此认定容器已停止。"))
         }
         process.waitUntilExit(); try handle.synchronize()
         let output = String(data: (try? Data(contentsOf: temp)) ?? Data(), encoding: .utf8) ?? ""
@@ -75,7 +75,7 @@ struct Runtime {
         if name == AppleRuntime.context { try AppleRuntime.checkPlatform(); return }
         let result = try docker(name, ["context", "inspect", name])
         let data = Data(result.output.utf8)
-        guard let contexts = try JSONSerialization.jsonObject(with: data) as? [[String: Any]], let endpoint = (contexts.first?["Endpoints"] as? [String: [String: Any]])?["docker"]?["Host"] as? String, endpoint.hasPrefix("unix://") else { throw Problem("只支持本机 Unix socket Docker context，不能将宿主路径发往远端引擎") }
+        guard let contexts = try JSONSerialization.jsonObject(with: data) as? [[String: Any]], let endpoint = (contexts.first?["Endpoints"] as? [String: [String: Any]])?["docker"]?["Host"] as? String, endpoint.hasPrefix("unix://") else { throw Problem(tr("只支持本机 Unix socket Docker context，不能将宿主路径发往远端引擎")) }
     }
     static func engine(_ context: String) throws -> String { if context == AppleRuntime.context { return try AppleRuntime.engine() }; try localContext(context); return try docker(context, ["info", "--format", "{{.ServerVersion}}"], timeout: 12).output.trimmingCharacters(in: .whitespacesAndNewlines) }
     static func appDirectory(_ record: AppRecord) -> URL { support.appendingPathComponent("apps/\(record.id)") }
@@ -92,7 +92,7 @@ struct Runtime {
             try transaction { registry in
                 guard registry.schemaVersion < 2 else { return }
                 let backup = support.appendingPathComponent("registry-before-apple.json")
-                guard !FileManager.default.fileExists(atPath: backup.path) else { throw Problem("已有 Apple 迁移备份但注册表版本仍旧，请人工检查；不会覆盖备份") }
+                guard !FileManager.default.fileExists(atPath: backup.path) else { throw Problem(tr("已有 Apple 迁移备份但注册表版本仍旧，请人工检查；不会覆盖备份")) }
                 try write(JSONEncoder().encode(registry), to: backup)
                 registry.schemaVersion = 2; registry.context = AppleRuntime.context
                 for i in registry.apps.indices where registry.apps[i].context != AppleRuntime.context { registry.apps[i].autoStart = false }
@@ -107,28 +107,28 @@ struct Runtime {
         }
     }
     static func migrateToApple(_ record: AppRecord, confirmOldStopped: Bool) throws -> String {
-        guard record.context != AppleRuntime.context else { return "已经使用 Apple container" }
-        guard confirmOldStopped else { throw Problem("迁移前须确认旧 Docker 实例已停止。这里只迁移登记，不搬运数据、不启动服务。") }
+        guard record.context != AppleRuntime.context else { return tr("已经使用 Apple container") }
+        guard confirmOldStopped else { throw Problem(tr("迁移前须确认旧 Docker 实例已停止。这里只迁移登记，不搬运数据、不启动服务。")) }
         try FileManager.default.createDirectory(at: appDirectory(record), withIntermediateDirectories: true)
         let fd = open(appDirectory(record).appendingPathComponent("start.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw Problem("无法锁定迁移") }; defer { flock(fd, LOCK_UN); close(fd) }
-        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw Problem("旧后端正在启动，请先取消启动并确认停止") }
-        if let running = try? observe(record).running, running > 0 { throw Problem("旧 Docker 实例仍在运行，先正常收尾并关闭后再迁移") }
+        guard fd >= 0 else { throw Problem(tr("无法锁定迁移")) }; defer { flock(fd, LOCK_UN); close(fd) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw Problem(tr("旧后端正在启动，请先取消启动并确认停止")) }
+        if let running = try? observe(record).running, running > 0 { throw Problem(tr("旧 Docker 实例仍在运行，先正常收尾并关闭后再迁移")) }
         _ = try approved(record)
         try transaction { registry in
-            guard let i = registry.apps.firstIndex(where: { $0.id == record.id }), registry.apps[i].context == record.context else { throw Problem("应用登记已改变，请刷新") }
+            guard let i = registry.apps.firstIndex(where: { $0.id == record.id }), registry.apps[i].context == record.context else { throw Problem(tr("应用登记已改变，请刷新")) }
             try write(JSONEncoder().encode(record), to: appDirectory(record).appendingPathComponent("before-apple.json"))
             registry.apps[i].context = AppleRuntime.context; registry.apps[i].autoStart = false
             registry.context = AppleRuntime.context
         }
-        return "已迁移登记到 Apple container；未启动服务，登录自动启动保持关闭"
+        return tr("已迁移登记到 Apple container；未启动服务，登录自动启动保持关闭")
     }
     static func transaction<T>(_ body: (inout Registry) throws -> T) throws -> T {
         try prepare()
         let lock = open(support.appendingPathComponent("registry.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard lock >= 0 else { throw Problem("无法锁定应用注册表") }
+        guard lock >= 0 else { throw Problem(tr("无法锁定应用注册表")) }
         defer { flock(lock, LOCK_UN); close(lock) }
-        guard flock(lock, LOCK_EX) == 0 else { throw Problem("注册表正在使用") }
+        guard flock(lock, LOCK_EX) == 0 else { throw Problem(tr("注册表正在使用")) }
         var registry = try load()
         let result = try body(&registry)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -139,7 +139,7 @@ struct Runtime {
         let v = try validate(root: root); try localContext(context)
         return try transaction { registry in
             if let old = registry.apps.first(where: { $0.root == v.root.path && $0.context == context }) {
-                guard try observe(old).running == 0 else { throw Problem("更新配置前请先关闭这个应用") }
+                guard try observe(old).running == 0 else { throw Problem(tr("更新配置前请先关闭这个应用")) }
                 var updated = old; updated.name = v.manifest.name; updated.icon = v.manifest.icon; updated.manifestHash = v.hash; updated.approvalHash = try v.approvalHash(); updated.manifestVersion = v.manifest.version
                 registry.apps[registry.apps.firstIndex(where: { $0.id == old.id })!] = updated
                 if let icon = v.icon { try write(Data(contentsOf: icon), to: appDirectory(updated).appendingPathComponent("approved-icon")) }
@@ -154,7 +154,7 @@ struct Runtime {
         }
     }
     static func record(_ id: String) throws -> AppRecord {
-        guard let r = try load().apps.first(where: { $0.id == id || $0.project == id }) else { throw Problem("未找到已导入的应用") }; return r
+        guard let r = try load().apps.first(where: { $0.id == id || $0.project == id }) else { throw Problem(tr("未找到已导入的应用")) }; return r
     }
     static func approved(_ record: AppRecord) throws -> Validated {
         let v = try validate(root: URL(fileURLWithPath: record.root))
@@ -170,7 +170,7 @@ struct Runtime {
             return v
         }
         guard record.context == AppleRuntime.context, let approved = record.approvalHash, approved == (try v.approvalHash()) else {
-            throw Problem("配置已改变或旧登记缺少授权基线。请先关闭并重新导入确认；只有 version 变化可以自动重新部署。")
+            throw Problem(tr("配置已改变或旧登记缺少授权基线。请先关闭并重新导入确认；只有 version 变化可以自动重新部署。"))
         }
         // Formatting-only changes do not invalidate the existing container seal.
         if v.manifest.version == record.manifestVersion { return Validated(root: v.root, manifest: v.manifest, hash: record.manifestHash, icon: v.icon) }
@@ -190,14 +190,14 @@ struct Runtime {
     static func observe(_ record: AppRecord) throws -> Observation {
         if record.context == AppleRuntime.context { return try AppleRuntime.observe(record) }
         let containers = try inspect(record)
-        if containers.isEmpty { return Observation(state: "stopped", detail: "尚未启动或已移除容器", containers: 0, running: 0, healthy: nil) }
+        if containers.isEmpty { return Observation(state: "stopped", detail: tr("尚未启动或已移除容器"), containers: 0, running: 0, healthy: nil) }
         let running = containers.filter { ($0["State"] as? [String: Any])?["Running"] as? Bool == true }.count
-        if running == 0 { return Observation(state: "stopped", detail: "全部容器已停止，数据保留", containers: containers.count, running: 0, healthy: nil) }
-        if running != containers.count { return Observation(state: "partial", detail: "\(running)/\(containers.count) 个容器运行", containers: containers.count, running: running, healthy: false) }
+        if running == 0 { return Observation(state: "stopped", detail: tr("全部容器已停止，数据保留"), containers: containers.count, running: 0, healthy: nil) }
+        if running != containers.count { return Observation(state: "partial", detail: L("\(running)/\(containers.count) containers running", "\(running)/\(containers.count) 个容器运行"), containers: containers.count, running: running, healthy: false) }
         let states = containers.compactMap { (($0["State"] as? [String: Any])?["Health"] as? [String: Any])?["Status"] as? String }
-        if states.contains("unhealthy") { return Observation(state: "unhealthy", detail: "Docker 健康检查失败", containers: containers.count, running: running, healthy: false) }
-        if states.contains("starting") { return Observation(state: "starting", detail: "健康检查正在启动", containers: containers.count, running: running, healthy: nil) }
-        return Observation(state: "running", detail: "容器运行中，正在检查服务", containers: containers.count, running: running, healthy: nil)
+        if states.contains("unhealthy") { return Observation(state: "unhealthy", detail: tr("Docker 健康检查失败"), containers: containers.count, running: running, healthy: false) }
+        if states.contains("starting") { return Observation(state: "starting", detail: tr("健康检查正在启动"), containers: containers.count, running: running, healthy: nil) }
+        return Observation(state: "running", detail: tr("容器运行中，正在检查服务"), containers: containers.count, running: running, healthy: nil)
     }
     // Compose treats $ as interpolation even in JSON; preserve container arguments literally.
     static func escaped(_ value: Any) -> Any {
@@ -207,7 +207,7 @@ struct Runtime {
         return value
     }
     static func generate(_ record: AppRecord, validated v: Validated, bridge: [String: Any]? = nil) throws {
-        guard !v.manifest.services.values.contains(where: { $0.build?.script != nil }) else { throw Problem("build.script 仅支持 Apple container 后端，请先显式迁移登记") }
+        guard !v.manifest.services.values.contains(where: { $0.build?.script != nil }) else { throw Problem(tr("build.script 仅支持 Apple container 后端，请先显式迁移登记")) }
         var services: [String: Any] = [:]
         for (name, s) in v.manifest.services {
             var service: [String: Any] = ["restart": "no", "init": true, "security_opt": ["no-new-privileges:true"], "labels": ["dev.okdocker.app": record.id]]
@@ -244,13 +244,13 @@ struct Runtime {
     // Disabling implicit .env loading is important: the manifest is the authority.
     static func auditExpanded(_ record: AppRecord, validated v: Validated, android: Bool) throws {
         let output = try compose(record, ["config", "--format", "json"]).output
-        guard let config = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any], let services = config["services"] as? [String: [String: Any]] else { throw Problem("无法验证展开后的 Compose") }
+        guard let config = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any], let services = config["services"] as? [String: [String: Any]] else { throw Problem(tr("无法验证展开后的 Compose")) }
         let names = Set(v.manifest.services.keys).union(android ? ["okdocker-adb"] : [])
-        guard Set(services.keys) == names else { throw Problem("展开后的服务与授权配置不一致") }
+        guard Set(services.keys) == names else { throw Problem(tr("展开后的服务与授权配置不一致")) }
         for (name, service) in services {
             let fields: Set<String> = ["build", "image", "command", "entrypoint", "environment", "init", "labels", "networks", "ports", "restart", "security_opt", "volumes", "working_dir", "depends_on", "read_only", "cap_drop"]
-            guard Set(service.keys).isSubset(of: fields), service["restart"] as? String == "no" else { throw Problem("展开配置包含未授权能力：\(name)") }
-            if let entrypoint = service["entrypoint"], !(entrypoint is NSNull) { throw Problem("不允许覆盖镜像入口") }
+            guard Set(service.keys).isSubset(of: fields), service["restart"] as? String == "no" else { throw Problem(L("The expanded configuration contains an unapproved capability: \(name)", "展开配置包含未授权能力：\(name)")) }
+            if let entrypoint = service["entrypoint"], !(entrypoint is NSNull) { throw Problem(tr("不允许覆盖镜像入口")) }
             var allowed: Set<String> = []
             if name == "okdocker-adb" {
                 allowed.insert(appDirectory(record).appendingPathComponent("bridge-client.json").path + "|/run/bridge.json")
@@ -258,31 +258,31 @@ struct Runtime {
                 for mount in spec.mounts ?? [Mount(source: ".", target: "/workspace", readOnly: false)] { allowed.insert(try contained(mount.source, root: v.root).path + "|" + mount.target) }
             }
             for mount in service["volumes"] as? [[String: Any]] ?? [] {
-                guard mount["type"] as? String == "bind", let source = mount["source"] as? String, let target = mount["target"] as? String, allowed.contains(source + "|" + target) else { throw Problem("展开配置包含未授权挂载") }
+                guard mount["type"] as? String == "bind", let source = mount["source"] as? String, let target = mount["target"] as? String, allowed.contains(source + "|" + target) else { throw Problem(tr("展开配置包含未授权挂载")) }
             }
             for port in service["ports"] as? [[String: Any]] ?? [] {
-                guard port["host_ip"] as? String == "127.0.0.1", port["protocol"] as? String == "tcp" else { throw Problem("端口仅允许发布到本机 loopback") }
+                guard port["host_ip"] as? String == "127.0.0.1", port["protocol"] as? String == "tcp" else { throw Problem(tr("端口仅允许发布到本机 loopback")) }
             }
             if let build = service["build"] as? [String: Any], let context = build["context"] as? String {
-                if name == "okdocker-adb" { guard context == appDirectory(record).appendingPathComponent("android-client").path else { throw Problem("非法桥构建目录") } }
-                else { guard let spec = v.manifest.services[name]?.build, context == (try contained(spec.context, root: v.root).path) else { throw Problem("构建目录未获授权") } }
+                if name == "okdocker-adb" { guard context == appDirectory(record).appendingPathComponent("android-client").path else { throw Problem(tr("非法桥构建目录")) } }
+                else { guard let spec = v.manifest.services[name]?.build, context == (try contained(spec.context, root: v.root).path) else { throw Problem(tr("构建目录未获授权")) } }
             }
         }
         let networks = config["networks"] as? [String: [String: Any]] ?? [:]
-        guard Set(networks.keys).isSubset(of: ["default"]), !networks.values.contains(where: { $0["external"] as? Bool == true }) else { throw Problem("不允许加入外部 Docker 网络") }
+        guard Set(networks.keys).isSubset(of: ["default"]), !networks.values.contains(where: { $0["external"] as? Bool == true }) else { throw Problem(tr("不允许加入外部 Docker 网络")) }
         try write(Data(output.utf8), to: appDirectory(record).appendingPathComponent("expanded-compose.json"))
     }
     static func start(_ record: AppRecord) throws -> String {
         let latest = try self.record(record.id)
-        guard latest.context == record.context, latest.manifestHash == record.manifestHash, latest.deployment == record.deployment else { throw Problem("登记已改变，请刷新后再启动") }
+        guard latest.context == record.context, latest.manifestHash == record.manifestHash, latest.deployment == record.deployment else { throw Problem(tr("登记已改变，请刷新后再启动")) }
         try FileManager.default.createDirectory(at: appDirectory(record), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let gate = open(appDirectory(record).appendingPathComponent("stop.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard gate >= 0 else { throw Problem("无法锁定操作") }; defer { close(gate) }
-        guard flock(gate, LOCK_SH | LOCK_NB) == 0 else { throw Problem("应用正在关闭，请稍后再启动") }
+        guard gate >= 0 else { throw Problem(tr("无法锁定操作")) }; defer { close(gate) }
+        guard flock(gate, LOCK_SH | LOCK_NB) == 0 else { throw Problem(tr("应用正在关闭，请稍后再启动")) }
         let fd = open(appDirectory(record).appendingPathComponent("start.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw Problem("无法锁定启动操作") }
+        guard fd >= 0 else { throw Problem(tr("无法锁定启动操作")) }
         defer { flock(fd, LOCK_UN); close(fd) }
-        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw Problem("应用已经在启动") }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw Problem(tr("应用已经在启动")) }
         let cancel = appDirectory(record).appendingPathComponent("stop.request")
         try? FileManager.default.removeItem(at: cancel)
         flock(gate, LOCK_UN)
@@ -291,14 +291,14 @@ struct Runtime {
                 let text = try startImpl(record)
                 if (try? self.record(record.id).lanAccess) == true {
                     do { try LANAccess.ensure(record) }
-                    catch { return text + "；局域网入口未就绪：" + error.localizedDescription }
+                    catch { return text + tr("；局域网入口未就绪：") + error.localizedDescription }
                 }
                 return text
             }
             catch {
                 if FileManager.default.fileExists(atPath: cancel.path) {
                     try? $cancellation.withValue(nil) { try killCurrent(record); AndroidBridge.stop(record) }
-                    throw Problem("启动已取消")
+                    throw Problem(tr("启动已取消"))
                 }
                 throw error
             }
@@ -308,23 +308,23 @@ struct Runtime {
         // Darwin SO_REUSEADDR can permit a specific-address bind next to a
         // wildcard listener. A successful bind alone is NOT an occupancy test.
         let listeners = try command("/usr/sbin/lsof", ["-nP", "-t", "-iTCP:\(port)", "-sTCP:LISTEN"], timeout: 5, allowFailure: true)
-        guard listeners.code == 1 && listeners.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Problem("宿主端口 \(port) 已占用或无法确认空闲。请先停止原服务或修改配置；不会替你杀掉其他程序。") }
+        guard listeners.code == 1 && listeners.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Problem(L("Host port \(port) is busy or could not be confirmed free. Stop the original service or change the configuration. Other programs will not be killed.", "宿主端口 \(port) 已占用或无法确认空闲。请先停止原服务或修改配置；不会替你杀掉其他程序。")) }
         let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw Problem("无法检查宿主端口") }; defer { close(fd) }
+        guard fd >= 0 else { throw Problem(tr("无法检查宿主端口")) }; defer { close(fd) }
         var reuse: Int32 = 1
         _ = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
         var address = sockaddr_in(); address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(port).bigEndian; address.sin_addr.s_addr = inet_addr("127.0.0.1")
         let result = withUnsafePointer(to: &address) { pointer in pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        guard result == 0, listen(fd, 1) == 0 else { throw Problem("宿主端口 \(port) 已占用。请先停止原服务或修改配置；不会替你杀掉其他程序。") }
+        guard result == 0, listen(fd, 1) == 0 else { throw Problem(L("Host port \(port) is in use. Stop the original service or change the configuration. Other programs will not be killed.", "宿主端口 \(port) 已占用。请先停止原服务或修改配置；不会替你杀掉其他程序。")) }
     }
     private static func startImpl(_ record: AppRecord) throws -> String {
         if record.context == AppleRuntime.context { return try AppleRuntime.start(record) }
         let v = try approved(record); _ = try engine(record.context)
         let existing = try observe(record)
         if existing.running > 0 {
-            guard existing.state == "running" else { throw Problem("应用部分运行或异常，请先强制关闭后再启动") }
-            return "\(record.name) 已在运行"
+            guard existing.state == "running" else { throw Problem(tr("应用部分运行或异常，请先强制关闭后再启动")) }
+            return L("\(record.name) is already running", "\(record.name) 已在运行")
         }
         for port in Set([v.manifest.frontend.hostPort, v.manifest.backend.hostPort]) { try requireFreePort(port) }
         // The kernel/Docker own the port truth. Do not read other imported
@@ -348,8 +348,8 @@ struct Runtime {
             let output = try compose(record, ["up", "-d", "--no-build", "--pull", "never", "--remove-orphans"], timeout: 120).output
             try write(Data(output.utf8), to: appDirectory(record).appendingPathComponent("last-start.log"))
             let observed = try observe(record)
-            guard observed.running > 0 else { throw Problem("启动命令结束，但没有观察到运行中的容器。请查看日志。") }
-            return "已启动 \(record.name)"
+            guard observed.running > 0 else { throw Problem(tr("启动命令结束，但没有观察到运行中的容器。请查看日志。")) }
+            return L("Started \(record.name)", "已启动 \(record.name)")
         } catch { if (try? ids(record, runningOnly: true).isEmpty) == true { AndroidBridge.stop(record) }; throw error }
     }
     private static func cancelLaunchers(_ record: AppRecord) throws {
@@ -362,38 +362,38 @@ struct Runtime {
             guard let pid = Int32(value), pid > 1, pid != getpid() else { continue }
             let info = try command("/bin/ps", ["-p", String(pid), "-o", "command="], timeout: 3, allowFailure: true)
             guard info.output.contains("--project-name " + record.project + " "), info.output.contains(composeFile(record).path) else { continue }
-            guard Darwin.kill(pid, SIGKILL) == 0 || errno == ESRCH else { throw Problem("无法取消该应用的启动客户端，未确认关闭") }
+            guard Darwin.kill(pid, SIGKILL) == 0 || errno == ESRCH else { throw Problem(tr("无法取消该应用的启动客户端，未确认关闭")) }
         }
     }
     private static func killCurrent(_ record: AppRecord) throws {
         if record.context == AppleRuntime.context { try AppleRuntime.killCurrent(record); return }
         let running = try ids(record, runningOnly: true)
         if !running.isEmpty { _ = try docker(record.context, ["kill", "--signal", "KILL"] + running, allowFailure: true) }
-        guard try ids(record, runningOnly: true).isEmpty else { throw Problem("仍有运行中的容器，未确认关闭") }
+        guard try ids(record, runningOnly: true).isEmpty else { throw Problem(tr("仍有运行中的容器，未确认关闭")) }
     }
     static func forceStop(_ record: AppRecord) throws -> String {
         try FileManager.default.createDirectory(at: appDirectory(record), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let gate = open(appDirectory(record).appendingPathComponent("stop.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard gate >= 0 else { throw Problem("无法锁定关闭操作") }; defer { flock(gate, LOCK_UN); close(gate) }
-        guard flock(gate, LOCK_EX) == 0 else { throw Problem("无法锁定关闭操作") }
+        guard gate >= 0 else { throw Problem(tr("无法锁定关闭操作")) }; defer { flock(gate, LOCK_UN); close(gate) }
+        guard flock(gate, LOCK_EX) == 0 else { throw Problem(tr("无法锁定关闭操作")) }
         try write(Data("cancel\n".utf8), to: appDirectory(record).appendingPathComponent("stop.request"))
         try LANAccess.stop(record)
         try cancelLaunchers(record)
         try killCurrent(record)
         let fd = open(appDirectory(record).appendingPathComponent("start.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw Problem("已终止当前容器，但无法确认启动操作已取消") }
+        guard fd >= 0 else { throw Problem(tr("已终止当前容器，但无法确认启动操作已取消")) }
         defer { flock(fd, LOCK_UN); close(fd) }
         let deadline = Date().addingTimeInterval(8)
         while flock(fd, LOCK_EX | LOCK_NB) != 0 {
-            guard Date() < deadline else { throw Problem("当前容器已被终止，但启动取消仍未确认，请重试关闭") }
+            guard Date() < deadline else { throw Problem(tr("当前容器已被终止，但启动取消仍未确认，请重试关闭")) }
             Thread.sleep(forTimeInterval: 0.1)
         }
         try killCurrent(record)
         AndroidBridge.stop(record)
-        return "已强制关闭 \(record.name)，保留应用文件与数据"
+        return L("Force-stopped \(record.name). Application files and data were kept", "已强制关闭 \(record.name)，保留应用文件与数据")
     }
     static func remove(_ record: AppRecord) throws {
-        guard try ids(record, runningOnly: true).isEmpty else { throw Problem("请先关闭应用，再从启动器移除") }
+        guard try ids(record, runningOnly: true).isEmpty else { throw Problem(tr("请先关闭应用，再从启动器移除")) }
         try LANAccess.stop(record)
         if record.context == AppleRuntime.context {
             try AppleRuntime.remove(record)
@@ -401,7 +401,7 @@ struct Runtime {
             try transaction { $0.apps.removeAll { $0.id == record.id } }
             return
         }
-        guard try ids(record, runningOnly: true).isEmpty else { throw Problem("请先关闭应用，再从启动器移除") }
+        guard try ids(record, runningOnly: true).isEmpty else { throw Problem(tr("请先关闭应用，再从启动器移除")) }
         let existing = try ids(record)
         if !existing.isEmpty { _ = try docker(record.context, ["rm"] + existing) }
         let networks = try docker(record.context, ["network", "ls", "-q", "--filter", "label=com.docker.compose.project=\(record.project)"]).output.split(whereSeparator: \.isWhitespace).map(String.init)
@@ -411,7 +411,7 @@ struct Runtime {
     }
     static func autostart(_ record: AppRecord, enabled: Bool) throws {
         try transaction { registry in
-            guard let index = registry.apps.firstIndex(where: { $0.id == record.id }) else { throw Problem("应用已移除") }
+            guard let index = registry.apps.firstIndex(where: { $0.id == record.id }) else { throw Problem(tr("应用已移除")) }
             registry.apps[index].autoStart = enabled
         }
     }

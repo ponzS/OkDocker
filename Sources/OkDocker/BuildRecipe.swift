@@ -8,12 +8,12 @@ enum BuildRecipe {
         guard let script = build.script else { return nil }
         let file = try contained(script, root: context, directory: false)
         let relative = String(file.path.dropFirst(context.path.count + 1))
-        guard !relative.isEmpty, !relative.contains(where: { $0 == "\r" || $0 == "\n" }), relative.utf8.count <= 4096 else { throw Problem("build.script 必须是构建目录内的普通脚本文件路径") }
+        guard !relative.isEmpty, !relative.contains(where: { $0 == "\r" || $0 == "\n" }), relative.utf8.count <= 4096 else { throw Problem(tr("build.script 必须是构建目录内的普通脚本文件路径")) }
         let source = try String(contentsOf: dockerfile, encoding: .utf8)
         var lines = source.components(separatedBy: "\n")
         let positions = lines.indices.filter { lines[$0].trimmingCharacters(in: .whitespacesAndNewlines) == marker }
-        guard positions.count == 1, let index = positions.first else { throw Problem("使用 build.script 时，Dockerfile 必须且只能包含一行 \(marker)，放在 COPY 和 WORKDIR 之后的构建阶段") }
-        if index > 0, lines[index - 1].trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("\\") { throw Problem("构建脚本标记不能位于 Dockerfile 续行指令内") }
+        guard positions.count == 1, let index = positions.first else { throw Problem(L("When using build.script, the Dockerfile must contain exactly one line \(marker), in a build stage after COPY and WORKDIR", "使用 build.script 时，Dockerfile 必须且只能包含一行 \(marker)，放在 COPY 和 WORKDIR 之后的构建阶段")) }
+        if index > 0, lines[index - 1].trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("\\") { throw Problem(tr("构建脚本标记不能位于 Dockerfile 续行指令内")) }
         // Respect Linux shebang semantics (interpreter + one optional argument).
         // Without a shebang use /bin/sh; no executable bit or Mac interpreter needed.
         let handle = try FileHandle(forReadingFrom: file); defer { try? handle.close() }
@@ -21,9 +21,9 @@ enum BuildRecipe {
         var command = ["/bin/sh"]
         if prefix.starts(with: [0x23, 0x21]) {
             let header = prefix.prefix { $0 != 0x0a }
-            guard header.count <= 255, let line = String(data: header.dropFirst(2), encoding: .utf8) else { throw Problem("build.script 的 Linux shebang 过长或不是 UTF-8") }
+            guard header.count <= 255, let line = String(data: header.dropFirst(2), encoding: .utf8) else { throw Problem(tr("build.script 的 Linux shebang 过长或不是 UTF-8")) }
             let parts = line.trimmingCharacters(in: .whitespacesAndNewlines).split(maxSplits: 1, whereSeparator: { $0 == " " || $0 == "\t" }).map { String($0).trimmingCharacters(in: .whitespaces) }
-            guard let interpreter = parts.first, interpreter.hasPrefix("/"), !line.contains("\0") else { throw Problem("build.script 的 shebang 必须使用 Linux 解释器绝对路径") }
+            guard let interpreter = parts.first, interpreter.hasPrefix("/"), !line.contains("\0") else { throw Problem(tr("build.script 的 shebang 必须使用 Linux 解释器绝对路径")) }
             command = parts
         }
         // JSON exec form: no expansion or option injection from the supplied path.

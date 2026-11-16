@@ -19,6 +19,14 @@ final class LANAccessTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: object).write(to: root.appendingPathComponent("okdocker.json")); XCTAssertThrowsError(try validate(root: root))
     }
     func rules() throws -> String { let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent(); return try ConfigurationRules.text(resources: root) }
-    func testCompleteGenericRulesHaveAIInstructions() throws { let text = try rules(); XCTAssertTrue(text.contains("请根据以下 OkDocker 规则")); for field in ["schemaVersion", "hostAndroidDevices", "containerPort", "Dockerfile", "允许局域网访问"] { XCTAssertTrue(text.contains(field)) }; XCTAssertFalse(text.contains("小红书")); XCTAssertFalse(text.contains("发帖")) }
+    func testCompleteGenericRulesHaveAIInstructions() throws {
+        let text = try rules()
+        XCTAssertTrue(text.contains("Using the OkDocker rules below"))
+        for field in ["schemaVersion", "hostAndroidDevices", "containerPort", "Dockerfile", "Allow LAN access"] { XCTAssertTrue(text.contains(field), field) }
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let chinese = try String(contentsOf: root.appendingPathComponent("zh/CONFIGURATION.md"), encoding: .utf8)
+        XCTAssertTrue(chinese.contains("[English](../CONFIGURATION.md)"))
+        XCTAssertTrue(chinese.contains("允许局域网访问"))
+    }
     @MainActor func testCopiesCompleteRulesToPrivatePasteboard() async throws { let board = NSPasteboard.withUniqueName(); defer { board.clearContents() }; let text = try rules(); try ConfigurationRules.copy(text, to: board); XCTAssertEqual(board.string(forType: .string), text) }
 }

@@ -62,9 +62,9 @@ enum LANAccess {
     private static func withLock<T>(_ record: AppRecord, _ body: () throws -> T) throws -> T {
         try FileManager.default.createDirectory(at: Runtime.appDirectory(record), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let fd = Darwin.open(Runtime.appDirectory(record).appendingPathComponent("lan.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw Problem("无法锁定局域网入口") }
+        guard fd >= 0 else { throw Problem(tr("无法锁定局域网入口")) }
         defer { flock(fd, LOCK_UN); Darwin.close(fd) }
-        guard flock(fd, LOCK_EX) == 0 else { throw Problem("无法锁定局域网入口") }
+        guard flock(fd, LOCK_EX) == 0 else { throw Problem(tr("无法锁定局域网入口")) }
         return try body()
     }
     private static func helper(_ pid: Int32, _ record: AppRecord) -> Bool {
@@ -79,7 +79,7 @@ enum LANAccess {
     }
     static func status(_ record: AppRecord) -> LANStatus {
         guard record.lanAccess == true else { return LANStatus(enabled: false) }
-        guard let value = receipt(record) else { return LANStatus(enabled: true, error: "入口未运行；应用启动时开启，或重新打开此开关") }
+        guard let value = receipt(record) else { return LANStatus(enabled: true, error: tr("入口未运行；应用启动时开启，或重新打开此开关")) }
         return LANStatus(enabled: true, addresses: value.addresses, error: value.error)
     }
     private static func identity(_ pid: Int32) throws -> String {
@@ -89,18 +89,18 @@ enum LANAccess {
     // the same port. Recheck for every new connection to prevent port reuse from
     // exposing an unrelated service after the managed application exits.
     private static func leases(_ record: AppRecord, _ v: Validated) throws -> [LANLease] {
-        guard record.context == AppleRuntime.context else { throw Problem("请先迁移到 Apple container 再开启局域网入口") }
+        guard record.context == AppleRuntime.context else { throw Problem(tr("请先迁移到 Apple container 再开启局域网入口")) }
         let endpoints = [v.manifest.frontend, v.manifest.backend]
         return try Set(endpoints.map(\.hostPort)).sorted().map { port in
             let output = try Runtime.command("/usr/sbin/lsof", ["-nP", "-a", "-iTCP:\(port)", "-sTCP:LISTEN", "-Fpn"], timeout: 5).output
             let lines = output.split(separator: "\n").map(String.init)
             let pids = Set(lines.filter { $0.hasPrefix("p") }.compactMap { Int32($0.dropFirst()) })
             guard pids.count == 1, let pid = pids.first,
-                  lines.filter({ $0.hasPrefix("n") }) == ["n127.0.0.1:\(port)"] else { throw Problem("端口 \(port) 不是唯一的本机入口，不能开启局域网转发") }
+                  lines.filter({ $0.hasPrefix("n") }) == ["n127.0.0.1:\(port)"] else { throw Problem(L("Port \(port) is not the only local listener, so LAN forwarding was not enabled", "端口 \(port) 不是唯一的本机入口，不能开启局域网转发")) }
             let signature = try identity(pid)
             let service = endpoints.first { $0.hostPort == port }!.service
             let container = NSRegularExpression.escapedPattern(for: AppleRuntime.name(record, service))
-            guard signature.contains("/container-runtime-linux "), signature.range(of: "(?<![a-zA-Z0-9-])" + container + "(?![a-zA-Z0-9-])", options: .regularExpression) != nil else { throw Problem("端口 \(port) 不属于这个应用的 Apple 容器") }
+            guard signature.contains("/container-runtime-linux "), signature.range(of: "(?<![a-zA-Z0-9-])" + container + "(?![a-zA-Z0-9-])", options: .regularExpression) != nil else { throw Problem(L("Port \(port) does not belong to this app's Apple container", "端口 \(port) 不属于这个应用的 Apple 容器")) }
             return LANLease(port: port, pid: pid, identity: signature)
         }
     }
@@ -117,12 +117,12 @@ enum LANAccess {
         let found = try Runtime.command("/usr/bin/pgrep", ["-u", String(getuid()), "-f", "--", pattern], timeout: 3, allowFailure: true)
         for line in found.output.split(whereSeparator: \.isWhitespace) { if let pid = Int32(line), helper(pid, record) { pids.insert(pid) } }
         for pid in pids {
-            guard kill(pid, SIGTERM) == 0 || errno == ESRCH else { throw Problem("无法关闭局域网助手") }
+            guard kill(pid, SIGTERM) == 0 || errno == ESRCH else { throw Problem(tr("无法关闭局域网助手")) }
             for _ in 0..<50 {
                 if kill(pid, 0) != 0 { break }
                 Thread.sleep(forTimeInterval: 0.05)
             }
-            guard !helper(pid, record) else { throw Problem("局域网助手尚未退出，未确认入口关闭") }
+            guard !helper(pid, record) else { throw Problem(tr("局域网助手尚未退出，未确认入口关闭")) }
         }
         for file in [receiptURL(record), configURL(record)] { try? FileManager.default.removeItem(at: file) }
     }
@@ -131,9 +131,9 @@ enum LANAccess {
         try withLock(record) {
             let latest = try Runtime.record(record.id)
             guard latest.lanAccess == true else { try stopUnlocked(record); return }
-            guard !FileManager.default.fileExists(atPath: Runtime.appDirectory(latest).appendingPathComponent("stop.request").path) else { throw Problem("应用正在关闭；下次启动时恢复局域网入口") }
+            guard !FileManager.default.fileExists(atPath: Runtime.appDirectory(latest).appendingPathComponent("stop.request").path) else { throw Problem(tr("应用正在关闭；下次启动时恢复局域网入口")) }
             if receipt(latest) != nil { return }
-            guard !addresses().isEmpty else { throw Problem("没有可用的 Wi-Fi/以太网私有 IPv4 地址；未开放公网或 VPN 接口") }
+            guard !addresses().isEmpty else { throw Problem(tr("没有可用的 Wi-Fi/以太网私有 IPv4 地址；未开放公网或 VPN 接口")) }
             let v = try Runtime.approved(latest)
             let config = LANConfiguration(appID: latest.id, manifestHash: latest.manifestHash, nonce: UUID().uuidString, leases: try leases(latest, v))
             try stopUnlocked(latest)
@@ -151,31 +151,31 @@ enum LANAccess {
                 Thread.sleep(forTimeInterval: 0.05)
             }
             if process.isRunning { process.terminate(); process.waitUntilExit() }
-            throw Problem("局域网助手未就绪；请检查系统本地网络与防火墙提示，不会自动放宽系统权限")
+            throw Problem(tr("局域网助手未就绪；请检查系统本地网络与防火墙提示，不会自动放宽系统权限"))
         }
     }
     static func set(_ record: AppRecord, enabled: Bool) throws -> String {
         try FileManager.default.createDirectory(at: Runtime.appDirectory(record), withIntermediateDirectories: true)
         let gate = Darwin.open(Runtime.appDirectory(record).appendingPathComponent("stop.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard gate >= 0 else { throw Problem("无法锁定局域网授权") }
+        guard gate >= 0 else { throw Problem(tr("无法锁定局域网授权")) }
         defer { flock(gate, LOCK_UN); Darwin.close(gate) }
         if enabled {
-            guard flock(gate, LOCK_SH | LOCK_NB) == 0 else { throw Problem("应用正在关闭，请稍后再设置") }
+            guard flock(gate, LOCK_SH | LOCK_NB) == 0 else { throw Problem(tr("应用正在关闭，请稍后再设置")) }
             _ = try Runtime.approved(record)
-            guard record.context == AppleRuntime.context else { throw Problem("请先迁移到 Apple container") }
+            guard record.context == AppleRuntime.context else { throw Problem(tr("请先迁移到 Apple container")) }
         }
         try Runtime.transaction { registry in
-            guard let i = registry.apps.firstIndex(where: { $0.id == record.id }) else { throw Problem("应用已移除") }
+            guard let i = registry.apps.firstIndex(where: { $0.id == record.id }) else { throw Problem(tr("应用已移除")) }
             registry.apps[i].lanAccess = enabled
         }
-        if !enabled { try stop(record); return "已关闭局域网访问，本机入口与容器保持不变" }
-        if try Runtime.observe(record).running == 0 { return "已允许局域网访问，下次启动应用时生效" }
+        if !enabled { try stop(record); return tr("已关闭局域网访问，本机入口与容器保持不变") }
+        if try Runtime.observe(record).running == 0 { return tr("已允许局域网访问，下次启动应用时生效") }
         do { try ensure(record) }
         catch {
             try Runtime.transaction { registry in if let i = registry.apps.firstIndex(where: { $0.id == record.id }) { registry.apps[i].lanAccess = false } }
             try? stop(record); throw error
         }
-        return "已开启局域网访问，容器和数据未重建"
+        return tr("已开启局域网访问，容器和数据未重建")
     }
     private static func canListen(_ lease: LANLease) -> Bool {
         guard let result = try? Runtime.command("/usr/sbin/lsof", ["-nP", "-a", "-iTCP:\(lease.port)", "-sTCP:LISTEN", "-Fpn"], timeout: 3) else { return false }
@@ -190,7 +190,7 @@ enum LANAccess {
         let config = try JSONDecoder().decode(LANConfiguration.self, from: Data(contentsOf: url))
         let record = try Runtime.record(config.appID)
         guard url.standardizedFileURL == configURL(record).standardizedFileURL, record.lanAccess == true, record.manifestHash == config.manifestHash,
-              !config.leases.isEmpty, config.leases.allSatisfy({ (1024...65535).contains($0.port) && valid($0) }) else { throw Problem("局域网授权或服务入口已改变") }
+              !config.leases.isEmpty, config.leases.allSatisfy({ (1024...65535).contains($0.port) && valid($0) }) else { throw Problem(tr("局域网授权或服务入口已改变")) }
         await LANServer(record: record, config: config).run()
     }
     // POSIX is deliberate: NWListener reserves a port more broadly and returned
@@ -200,7 +200,7 @@ enum LANAccess {
         let source: DispatchSourceRead
         init(host: String, port: Int, accept: @escaping @Sendable (Int32) -> Void) throws {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
-            guard fd >= 0 else { throw Problem("无法创建局域网 socket") }
+            guard fd >= 0 else { throw Problem(tr("无法创建局域网 socket")) }
             var success = false; defer { if !success { Darwin.close(fd) } }
             _ = fcntl(fd, F_SETFD, FD_CLOEXEC); _ = fcntl(fd, F_SETFL, O_NONBLOCK)
             var reuse: Int32 = 1
@@ -208,7 +208,7 @@ enum LANAccess {
             var address = sockaddr_in(); address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); address.sin_family = sa_family_t(AF_INET)
             address.sin_port = UInt16(port).bigEndian; address.sin_addr.s_addr = inet_addr(host)
             let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-            guard bound == 0, Darwin.listen(fd, 64) == 0 else { throw Problem("监听失败：\(String(cString: strerror(errno)))") }
+            guard bound == 0, Darwin.listen(fd, 64) == 0 else { throw Problem(L("Listen failed: \(String(cString: strerror(errno)))", "监听失败：\(String(cString: strerror(errno)))")) }
             source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: DispatchQueue(label: "dev.okdocker.lan.accept"))
             source.setEventHandler {
                 while true {
@@ -308,7 +308,7 @@ enum LANAccess {
                 for key in Array(listeners.keys) where !desired.contains(key) { listeners.removeValue(forKey: key)?.cancel(); errors.removeValue(forKey: key) }
                 for host in hosts { for lease in config.leases {
                     let key = "\(host):\(lease.port)"; guard listeners[key] == nil else { continue }
-                    guard await Task.detached(operation: { LANAccess.canListen(lease) }).value else { errors[key] = "\(key) 与其他监听冲突，未覆盖其端口"; continue }
+                    guard await Task.detached(operation: { LANAccess.canListen(lease) }).value else { errors[key] = L("\(key) conflicts with another listener; its port was not taken over", "\(key) 与其他监听冲突，未覆盖其端口"); continue }
                     do {
                         listeners[key] = try TCPListener(host: host, port: lease.port) { fd in Task { @MainActor in self.accept(fd, lease: lease, key: key) } }
                         errors.removeValue(forKey: key)

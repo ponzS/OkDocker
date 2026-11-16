@@ -8,9 +8,9 @@ enum AppleRuntime {
     static let testedVersion = "1.7.1"
     static var scope: String { digest(Data(Runtime.support.standardizedFileURL.path.utf8)) }
     static func checkPlatform() throws {
-        guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 else { throw Problem("Apple container 需要 macOS 26 或更新版本") }
+        guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 else { throw Problem(tr("Apple container 需要 macOS 26 或更新版本")) }
         #if !arch(arm64)
-        throw Problem("Apple container 后端仅支持 Apple Silicon；不使用隐式 x86 模拟")
+        throw Problem(tr("Apple container 后端仅支持 Apple Silicon；不使用隐式 x86 模拟"))
         #endif
     }
     static func cli(_ args: [String], timeout: TimeInterval = 30, allowFailure: Bool = false, cwd: URL? = nil) throws -> CommandResult {
@@ -18,19 +18,19 @@ enum AppleRuntime {
         return try Runtime.command(Runtime.find("container"), args, timeout: timeout, cwd: cwd, allowFailure: allowFailure)
     }
     static func array(_ output: String) throws -> [[String: Any]] {
-        guard let value = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [[String: Any]] else { throw Problem("Apple container 返回了无法识别的数据；未确认实际状态") }
+        guard let value = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [[String: Any]] else { throw Problem(tr("Apple container 返回了无法识别的数据；未确认实际状态")) }
         return value
     }
     static func engine() throws -> String {
         let output = try cli(["system", "status", "--format", "json"], timeout: 10).output
-        guard let status = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any], status["status"] as? String == "running" else { throw Problem("Apple container 尚未启动，请点击“启动运行时”") }
+        guard let status = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any], status["status"] as? String == "running" else { throw Problem(tr("Apple container 尚未启动，请点击“启动运行时”")) }
         let version = (status["server"] as? [String: Any])?["version"] as? String ?? "unknown"
-        guard version == testedVersion else { throw Problem("当前 Apple container \(version)，本版仅适配并验收 \(testedVersion)。请安装对应官方签名版本。") }
+        guard version == testedVersion else { throw Problem(L("Apple container \(version) is installed; this build is adapted and validated only for \(testedVersion). Install that signed official release.", "当前 Apple container \(version)，本版仅适配并验收 \(testedVersion)。请安装对应官方签名版本。")) }
         return version
     }
     static func startEngine() throws -> String {
         _ = try cli(["system", "start", "--enable-kernel-install", "--timeout", "180"], timeout: 240)
-        return "Apple container \(try engine()) 服务已启动；应用启动后还会检查实际文件与 HTTP I/O"
+        return L("Apple container \(try engine()) is running. Starting an app still checks real files and HTTP I/O", "Apple container \(try engine()) 服务已启动；应用启动后还会检查实际文件与 HTTP I/O")
     }
     static func labels(_ record: AppRecord) -> [String: String] { ["dev.okdocker.app": record.id, "dev.okdocker.scope": scope] }
     static func owns(_ object: [String: Any], record: AppRecord) -> Bool {
@@ -42,15 +42,32 @@ enum AppleRuntime {
     }
     static func metadata(_ object: [String: Any]) -> [String: String] { (object["configuration"] as? [String: Any])?["labels"] as? [String: String] ?? [:] }
     static func service(_ object: [String: Any]) -> String? { metadata(object)["dev.okdocker.service"] }
+    static let relayExecutable = "/run/okdocker/adb-relay"
+    static let relayConfigPath = "/run/okdocker/bridge.json"
+    static let hostSocketMount = "/run/host-adb.sock"
+    static let adbSocketEnv = "localfilesystem:/run/okdocker-adb.sock"
+    struct AndroidGuest {
+        var directory: String
+        var hostSocket: String
+        var command: [String]
+    }
+    static func isLegacyPeer(_ object: [String: Any], record: AppRecord) -> Bool {
+        let mounts = (object["configuration"] as? [String: Any])?["mounts"] as? [[String: Any]] ?? []
+        return mounts.contains { ($0["destination"] as? String) == "/run/okdocker-adb.sock" && ($0["source"] as? String) == AndroidBridge.peerSocket(record).path }
+    }
     static func containers(_ record: AppRecord) throws -> [[String: Any]] {
         let latest = (try? Runtime.record(record.id)) ?? record
         let deployment = latest.deployment ?? "legacy"
-        return try ownedContainers(record).filter {
-            service($0) == "okdocker-adb" || (metadata($0)["dev.okdocker.deployment"] ?? "legacy") == deployment
+        let owned = try ownedContainers(record)
+        let selected = owned.filter { service($0) != "okdocker-adb" && (metadata($0)["dev.okdocker.deployment"] ?? "legacy") == deployment }
+        let legacy = selected.contains { isLegacyPeer($0, record: record) }
+        return owned.filter {
+            if service($0) == "okdocker-adb" { return legacy }
+            return (metadata($0)["dev.okdocker.deployment"] ?? "legacy") == deployment
         }
     }
     static func id(_ object: [String: Any]) throws -> String {
-        guard let value = (object["configuration"] as? [String: Any])?["id"] as? String, !value.isEmpty else { throw Problem("Apple container 缺少容器 ID") }; return value
+        guard let value = (object["configuration"] as? [String: Any])?["id"] as? String, !value.isEmpty else { throw Problem(tr("Apple container 缺少容器 ID")) }; return value
     }
     static func active(_ object: [String: Any]) -> Bool {
         // Unknown/transitioning states must not be reported as safely stopped.
@@ -62,9 +79,9 @@ enum AppleRuntime {
         let started = all.filter { ($0["status"] as? [String: Any])?["state"] as? String == "running" }.count
         let saved = Runtime.appDirectory(record).appendingPathComponent("apple-plan.json")
         let expected = ((try? Data(contentsOf: saved)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["count"] as? Int
-        if running == 0 { return Observation(state: "stopped", detail: "Apple 容器已停止，挂载数据和现有容器可写层保留", containers: all.count, running: 0, healthy: nil) }
-        if let expected, all.count != expected { return Observation(state: "partial", detail: "Apple 容器缺失：\(all.count)/\(expected)", containers: all.count, running: running, healthy: false) }
-        return Observation(state: started == all.count ? "running" : "partial", detail: "Apple 轻量 VM：\(started)/\(all.count) 个容器运行", containers: all.count, running: running, healthy: nil)
+        if running == 0 { return Observation(state: "stopped", detail: L("Apple containers are stopped. Mounted data and existing writable layers are kept", "Apple 容器已停止，挂载数据和现有容器可写层保留"), containers: all.count, running: 0, healthy: nil) }
+        if let expected, all.count != expected { return Observation(state: "partial", detail: L("Apple containers missing: \(all.count)/\(expected)", "Apple 容器缺失：\(all.count)/\(expected)"), containers: all.count, running: running, healthy: false) }
+        return Observation(state: started == all.count ? "running" : "partial", detail: L("Apple lightweight VMs: \(started)/\(all.count) containers running", "Apple 轻量 VM：\(started)/\(all.count) 个容器运行"), containers: all.count, running: running, healthy: nil)
     }
     static func name(_ record: AppRecord, _ service: String) -> String {
         guard service != "okdocker-adb", let deployment = record.deployment else { return record.project + "-" + service }
@@ -72,10 +89,41 @@ enum AppleRuntime {
         return record.project + "-" + digest(Data("\(deployment)/\(service)".utf8)).prefix(40)
     }
     static func mountArgument(source: String, target: String, readOnly: Bool) throws -> String {
-        guard ![source, target].contains(where: { $0.contains(",") || $0.contains("\0") || $0.contains("\n") }) else { throw Problem("Apple mount 参数不能无歧义表示含逗号、换行或 NUL 的路径，请先重命名") }
+        guard ![source, target].contains(where: { $0.contains(",") || $0.contains("\0") || $0.contains("\n") }) else { throw Problem(tr("Apple mount 参数不能无歧义表示含逗号、换行或 NUL 的路径，请先重命名")) }
         return "type=bind,source=\(source),target=\(target)" + (readOnly ? ",readonly" : "")
     }
-    static func createArguments(_ record: AppRecord, service: String, spec: ServiceSpec, validated v: Validated, image: String, extraEnvironment: [String: String] = [:]) throws -> [String] {
+    static func imageProcess(_ image: String, override: [String]?) throws -> [String] {
+        let objects = try array(cli(["image", "inspect", image], timeout: 60).output)
+        guard let variants = objects.first?["variants"] as? [[String: Any]],
+              let imageConfig = (variants.first?["config"] as? [String: Any])?["config"] as? [String: Any] else {
+            throw Problem(L("Cannot read the image command; the container was not created", tr("无法读取镜像命令，未创建容器")))
+        }
+        let entry = imageConfig["Entrypoint"] as? [String] ?? []
+        let command = override ?? (imageConfig["Cmd"] as? [String] ?? [])
+        let process = entry + command
+        guard !process.isEmpty, process.allSatisfy({ !$0.isEmpty && !$0.contains("\0") }) else { throw Problem(L("The image has no command to run after the ADB relay", tr("镜像没有可在 ADB 转发之后执行的命令"))) }
+        return process
+    }
+    static func guestDirectory(_ record: AppRecord) -> URL { Runtime.appDirectory(record).appendingPathComponent("android-guest") }
+    static func prepareGuest(_ record: AppRecord) throws -> AndroidGuest {
+        let bridge = try AndroidBridge.launchUnix(record)
+        guard let token = bridge["token"] as? String, !token.isEmpty else { throw Problem(L("Android bridge token is missing", tr("安卓桥令牌缺失"))) }
+        let directory = guestDirectory(record)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+        try Runtime.json(["socket": hostSocketMount, "token": token, "listenSocket": "/run/okdocker-adb.sock"], to: directory.appendingPathComponent("bridge.json"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: directory.appendingPathComponent("bridge.json").path)
+        let binary = directory.appendingPathComponent("adb-relay")
+        if FileManager.default.fileExists(atPath: binary.path) { try FileManager.default.removeItem(at: binary) }
+        try FileManager.default.copyItem(at: Runtime.resources.appendingPathComponent("Android/adb-relay"), to: binary)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        return AndroidGuest(directory: directory.path, hostSocket: AndroidBridge.unixSocket(record).path, command: [])
+    }
+    static func stopUnusedSidecar(_ record: AppRecord) throws {
+        let ids = try ownedContainers(record).filter { service($0) == "okdocker-adb" && active($0) }.map { try id($0) }
+        if !ids.isEmpty { _ = try cli(["stop", "--time", "5"] + ids, timeout: 30, allowFailure: true) }
+    }
+    static func createArguments(_ record: AppRecord, service: String, spec: ServiceSpec, validated v: Validated, image: String, extraEnvironment: [String: String] = [:], androidGuest: AndroidGuest? = nil, legacyPeer: Bool = false) throws -> [String] {
         var args = ["create", "--name", name(record, service), "--platform", "linux/arm64", "--network", record.project, "--init", "--cap-drop", "NET_RAW"]
         var metadata = labels(record).merging(["dev.okdocker.manifest": v.hash, "dev.okdocker.service": service, "dev.okdocker.deployment": service == "okdocker-adb" ? "shared" : record.deployment ?? "legacy"], uniquingKeysWith: { _, b in b })
         if service != "okdocker-adb", let version = v.manifest.version { metadata["dev.okdocker.version"] = version }
@@ -85,19 +133,24 @@ enum AppleRuntime {
         }
         if let wd = spec.workingDirectory { args += ["--workdir", wd] }
         for (key, value) in (spec.environment ?? [:]).merging(extraEnvironment, uniquingKeysWith: { _, b in b }).sorted(by: { $0.key < $1.key }) {
-            guard !value.contains("\0") else { throw Problem("环境变量不能包含 NUL") }
+            guard !value.contains("\0") else { throw Problem(tr("环境变量不能包含 NUL")) }
             args += ["--env", "\(key)=\(value)"]
         }
         for port in Set([v.manifest.frontend, v.manifest.backend].filter { $0.service == service }.map { "127.0.0.1:\($0.hostPort):\($0.containerPort)/tcp" }).sorted() { args += ["--publish", port] }
-        if v.manifest.hostAndroidDevices == true && service == v.manifest.backend.service {
+        if legacyPeer && service == v.manifest.backend.service {
             args += ["--volume", AndroidBridge.peerSocket(record).path + ":/run/okdocker-adb.sock"]
+        }
+        if let androidGuest, service == v.manifest.backend.service {
+            guard !androidGuest.command.isEmpty else { throw Problem(L("ADB relay has no application command", tr("ADB 转发缺少应用命令"))) }
+            args += ["--entrypoint", relayExecutable, "--mount", try mountArgument(source: androidGuest.directory, target: "/run/okdocker", readOnly: true), "--volume", androidGuest.hostSocket + ":" + hostSocketMount]
+            return args + ["--", image, "--config", relayConfigPath, "--"] + androidGuest.command
         }
         return args + ["--", image] + (spec.command ?? [])
     }
     static func network(_ record: AppRecord, create: Bool) throws -> [String: Any]? {
         let networks = try array(cli(["network", "list", "--format", "json"]).output)
         if let found = networks.first(where: { ($0["configuration"] as? [String: Any])?["name"] as? String == record.project }) {
-            guard owns(found, record: record) else { throw Problem("同名网络不属于该应用，拒绝接管") }
+            guard owns(found, record: record) else { throw Problem(tr("同名网络不属于该应用，拒绝接管")) }
             return found
         }
         if !create { return nil }
@@ -118,13 +171,13 @@ enum AppleRuntime {
             try Runtime.write(Data(result.output.utf8), to: Runtime.appDirectory(record).appendingPathComponent("last-build.log"))
             return image
         }
-        guard let image = spec.image else { throw Problem("服务缺少镜像") }
+        guard let image = spec.image else { throw Problem(tr("服务缺少镜像")) }
         if try fresh || cli(["image", "inspect", image], allowFailure: true).code != 0 { _ = try cli(["image", "pull", "--platform", "linux/arm64", "--", image], timeout: 1800) }
         return image
     }
     // Audit the actual, stopped container BEFORE starting it. Fail closed when the
     // upstream JSON format changes; never trust a successful create alone.
-    static func audit(_ object: [String: Any], record: AppRecord, v: Validated, service: String, spec: ServiceSpec, privateMount: String? = nil) throws {
+    static func audit(_ object: [String: Any], record: AppRecord, v: Validated, service: String, spec: ServiceSpec, privateMount: String? = nil, androidGuest: AndroidGuest? = nil, legacyPeer: Bool = false) throws {
         guard owns(object, record: record), let c = object["configuration"] as? [String: Any],
               (privateMount != nil ? (c["labels"] as? [String: String])?["dev.okdocker.service"] == "okdocker-adb" : (c["labels"] as? [String: String])?["dev.okdocker.manifest"] == v.hash),
               c["ssh"] as? Bool != true, c["rosetta"] as? Bool != true, c["virtualization"] as? Bool != true,
@@ -132,8 +185,8 @@ enum AppleRuntime {
               (c["platform"] as? [String: Any])?["architecture"] as? String == "arm64",
               (c["platform"] as? [String: Any])?["os"] as? String == "linux",
               c["runtimeHandler"] as? String == "container-runtime-linux", c["useInit"] as? Bool == true,
-              !(Set(c["capDrop"] as? [String] ?? []).intersection(["CAP_NET_RAW", "ALL"]).isEmpty) else { throw Problem("Apple 容器实际权限或配置摘要不符合本次授权") }
-        if privateMount != nil, !(c["capDrop"] as? [String] ?? []).contains("ALL") { throw Problem("ADB sidecar 必须移除全部 capabilities") }
+              !(Set(c["capDrop"] as? [String] ?? []).intersection(["CAP_NET_RAW", "ALL"]).isEmpty) else { throw Problem(tr("Apple 容器实际权限或配置摘要不符合本次授权")) }
+        if privateMount != nil, !(c["capDrop"] as? [String] ?? []).contains("ALL") { throw Problem(tr("ADB sidecar 必须移除全部 capabilities")) }
         let mounts = c["mounts"] as? [[String: Any]] ?? []
         var expected: Set<String> = []
         if let privateMount {
@@ -143,22 +196,41 @@ enum AppleRuntime {
         else {
             for m in spec.mounts ?? [Mount(source: ".", target: "/workspace", readOnly: false)] { expected.insert(try contained(m.source, root: v.root).path + "|" + m.target + "|\(m.readOnly ?? false)") }
         }
-        if privateMount == nil && v.manifest.hostAndroidDevices == true && service == v.manifest.backend.service { expected.insert(AndroidBridge.peerSocket(record).path + "|/run/okdocker-adb.sock|false") }
+        if let androidGuest, privateMount == nil, service == v.manifest.backend.service {
+            expected.insert(androidGuest.directory + "|/run/okdocker|true")
+            expected.insert(androidGuest.hostSocket + "|" + hostSocketMount + "|false")
+        } else if legacyPeer && privateMount == nil && service == v.manifest.backend.service {
+            expected.insert(AndroidBridge.peerSocket(record).path + "|/run/okdocker-adb.sock|false")
+        }
         let sockets = c["publishedSockets"] as? [[String: Any]] ?? []
         if privateMount != nil {
-            guard sockets.count == 1, sockets[0]["hostPath"] as? String == AndroidBridge.peerSocket(record).path, sockets[0]["containerPath"] as? String == "/run/adb-client.sock" else { throw Problem("ADB sidecar socket 转发不符合授权") }
-        } else { guard sockets.isEmpty else { throw Problem("应用包含未授权 socket 发布") } }
-        guard mounts.allSatisfy({ ($0["type"] as? [String: Any])?["virtiofs"] != nil }) else { throw Problem("Apple 容器包含未授权类型的挂载") }
+            guard sockets.count == 1, sockets[0]["hostPath"] as? String == AndroidBridge.peerSocket(record).path, sockets[0]["containerPath"] as? String == "/run/adb-client.sock" else { throw Problem(tr("ADB sidecar socket 转发不符合授权")) }
+        } else { guard sockets.isEmpty else { throw Problem(L("The application publishes an unapproved socket", tr("应用包含未授权 socket 发布"))) } }
+        if let androidGuest, service == v.manifest.backend.service {
+            let process = (c["initProcess"] as? [String: Any]) ?? [:]
+            let arguments = process["arguments"] as? [String] ?? []
+            guard process["executable"] as? String == relayExecutable, Array(arguments.prefix(3)) == ["--config", relayConfigPath, "--"], Array(arguments.dropFirst(3)) == androidGuest.command else {
+                throw Problem(L("ADB relay entrypoint does not match the approved in-container transport", tr("ADB 转发入口与已批准的容器内通道不符")))
+            }
+        }
+        guard mounts.allSatisfy({ ($0["type"] as? [String: Any])?["virtiofs"] != nil }) else { throw Problem(tr("Apple 容器包含未授权类型的挂载")) }
         let actual = Set(mounts.map { m in "\(m["source"] as? String ?? "?")|\(m["destination"] as? String ?? "?")|\((m["options"] as? [String] ?? []).contains("ro"))" })
-        guard actual == expected, mounts.count == expected.count else { throw Problem("Apple 容器实际挂载与授权不一致") }
+        guard actual == expected, mounts.count == expected.count else { throw Problem(tr("Apple 容器实际挂载与授权不一致")) }
         let networks = c["networks"] as? [[String: Any]] ?? []
-        guard networks.count == 1, networks[0]["network"] as? String == record.project else { throw Problem("Apple 容器接入了未授权网络") }
+        guard networks.count == 1, networks[0]["network"] as? String == record.project else { throw Problem(tr("Apple 容器接入了未授权网络")) }
         let allowed = Set([v.manifest.frontend, v.manifest.backend].filter { $0.service == service }.map { "\($0.hostPort)|\($0.containerPort)" })
         let ports = c["publishedPorts"] as? [[String: Any]] ?? []
-        guard ports.allSatisfy({ p in p["hostAddress"] as? String == "127.0.0.1" && (p["count"] as? Int ?? 1) == 1 && (p["proto"] as? String == "tcp") && allowed.contains("\(p["hostPort"] as? Int ?? -1)|\(p["containerPort"] as? Int ?? -1)") }), ports.count == allowed.count else { throw Problem("Apple 容器端口不符合 loopback 授权") }
+        guard ports.allSatisfy({ p in p["hostAddress"] as? String == "127.0.0.1" && (p["count"] as? Int ?? 1) == 1 && (p["proto"] as? String == "tcp") && allowed.contains("\(p["hostPort"] as? Int ?? -1)|\(p["containerPort"] as? Int ?? -1)") }), ports.count == allowed.count else { throw Problem(tr("Apple 容器端口不符合 loopback 授权")) }
     }
     static func inspect(_ name: String) throws -> [String: Any] {
-        guard let c = try array(cli(["inspect", name]).output).first else { throw Problem("创建后未观察到 Apple 容器") }; return c
+        guard let c = try array(cli(["inspect", name]).output).first else { throw Problem(tr("创建后未观察到 Apple 容器")) }; return c
+    }
+    static func guest(from object: [String: Any], record: AppRecord) -> AndroidGuest? {
+        let process = ((object["configuration"] as? [String: Any])?["initProcess"] as? [String: Any]) ?? [:]
+        guard process["executable"] as? String == relayExecutable else { return nil }
+        let arguments = process["arguments"] as? [String] ?? []
+        guard Array(arguments.prefix(3)) == ["--config", relayConfigPath, "--"] else { return nil }
+        return AndroidGuest(directory: guestDirectory(record).path, hostSocket: AndroidBridge.unixSocket(record).path, command: Array(arguments.dropFirst(3)))
     }
     static func start(_ record: AppRecord) throws -> String {
         let v = try Runtime.approved(record); _ = try engine()
@@ -170,53 +242,72 @@ enum AppleRuntime {
             _ = try createArguments(record, service: service, spec: spec, validated: v, image: spec.image ?? "okdocker-preflight")
         }
         var existing = try containers(record)
-        let expected = Set(v.manifest.services.keys).union(v.manifest.hostAndroidDevices == true ? ["okdocker-adb"] : [])
+        let backendName = v.manifest.backend.service
+        let backend = existing.first { service($0) == backendName }
+        let legacyAndroid = v.manifest.hostAndroidDevices == true && (backend.map { isLegacyPeer($0, record: record) } ?? false)
+        var expected = Set(v.manifest.services.keys)
+        if legacyAndroid { expected.insert("okdocker-adb") }
         for object in existing {
-            guard let key = service(object) else { throw Problem("现有容器缺少服务标签，拒绝复用") }
-            if let spec = v.manifest.services[key] { try audit(object, record: record, v: v, service: key, spec: spec) }
-            else if key == "okdocker-adb", v.manifest.hostAndroidDevices == true {
+            guard let key = service(object) else { throw Problem(L("An existing container has no service label and will not be reused", tr("现有容器缺少服务标签，拒绝复用"))) }
+            if let spec = v.manifest.services[key] {
+                let relay = (!legacyAndroid && key == backendName) ? guest(from: object, record: record) : nil
+                if v.manifest.hostAndroidDevices == true && key == backendName && !legacyAndroid && relay == nil {
+                    throw Problem(L("The existing container does not use the in-container ADB relay. It was not deleted. Back up its data, remove the registration, and import again.", tr("现有容器没有使用容器内 ADB 转发。未删除旧容器。请备份数据后移除登记并重新导入。")))
+                }
+                try audit(object, record: record, v: v, service: key, spec: spec, androidGuest: relay, legacyPeer: legacyAndroid && key == backendName)
+            } else if key == "okdocker-adb", legacyAndroid {
                 try audit(object, record: record, v: v, service: key, spec: ServiceSpec(mounts: []), privateMount: Runtime.appDirectory(record).appendingPathComponent("android-config").path)
-            } else { throw Problem("现有容器不属于本次授权的服务") }
+            } else { throw Problem(L("An existing container is not one of the approved services", tr("现有容器不属于本次授权的服务"))) }
         }
         let current = try observe(record)
-        if current.state == "running", current.containers == expected.count { return "\(record.name) 已在运行" }
-        if current.running > 0 && record.deployment == nil { throw Problem("应用部分运行，请先强制关闭后重试") }
+        if current.state == "running", current.containers == expected.count { return L("\(record.name) is already running", "\(record.name) 已在运行") }
+        if current.running > 0 && record.deployment == nil { throw Problem(L("The application is only partly running. Force-stop it and try again", tr("应用部分运行，请先强制关闭后重试"))) }
         try LANAccess.stop(record)
         let runningServices = Set(existing.filter { ($0["status"] as? [String: Any])?["state"] as? String == "running" }.compactMap(service))
         let pendingPorts = Set([v.manifest.frontend, v.manifest.backend].filter { !runningServices.contains($0.service) }.map(\.hostPort))
         for port in pendingPorts { try Runtime.requireFreePort(port) }
         if !existing.isEmpty {
-            guard existing.allSatisfy({ service($0) == "okdocker-adb" || (($0["configuration"] as? [String: Any])?["labels"] as? [String: String])?["dev.okdocker.manifest"] == v.hash }) else { throw Problem("现有容器使用旧配置。为保护容器可写层，未自动删除。请先备份容器内数据，移除旧登记后重新导入；宿主应用目录保留。") }
+            guard existing.allSatisfy({ service($0) == "okdocker-adb" || metadata($0)["dev.okdocker.manifest"] == v.hash }) else { throw Problem(L("Existing containers use an older configuration. They were not deleted, so their writable layers remain. Back up container data, remove the registration, and import again. The application directory on the Mac is kept.", tr("现有容器使用旧配置。为保护容器可写层，未自动删除。请先备份容器内数据，移除旧登记后重新导入；宿主应用目录保留。"))) }
         }
         _ = try network(record, create: true)
         var images: [String: String] = [:]
-        for (service, spec) in v.manifest.services.sorted(by: { $0.key < $1.key }) where !existing.contains(where: { (($0["configuration"] as? [String: Any])?["labels"] as? [String: String])?["dev.okdocker.service"] == service }) {
+        for (service, spec) in v.manifest.services.sorted(by: { $0.key < $1.key }) where !existing.contains(where: { metadata($0)["dev.okdocker.service"] == service }) {
             images[service] = try image(record, service: service, spec: spec, root: v.root)
         }
-        try VersionDeployment.recheck(record, desired: v) // Check version as well as permissions after a long build.
+        try VersionDeployment.recheck(record, desired: v)
         var adbAddress: String?
-        if v.manifest.hostAndroidDevices == true { adbAddress = try startAndroid(record, v: v, existing: existing) }
+        var prepared: AndroidGuest?
+        if v.manifest.hostAndroidDevices == true {
+            if legacyAndroid { adbAddress = try startAndroid(record, v: v, existing: existing) }
+            else { prepared = try prepareGuest(record); adbAddress = adbSocketEnv }
+        }
         for port in pendingPorts { try Runtime.requireFreePort(port) }
         try VersionDeployment.recheck(record, desired: v)
         try Runtime.json(["count": expected.count, "manifestHash": v.hash], to: Runtime.appDirectory(record).appendingPathComponent("apple-plan.json"))
         for (service, spec) in v.manifest.services.sorted(by: { $0.key < $1.key }) {
             let containerName = name(record, service)
-            let old = existing.first { (($0["configuration"] as? [String: Any])?["labels"] as? [String: String])?["dev.okdocker.service"] == service }
+            let old = existing.first { metadata($0)["dev.okdocker.service"] == service }
+            var serviceGuest: AndroidGuest?
             if old == nil {
-                let env = service == v.manifest.backend.service ? adbAddress.map { ["ADB_SERVER_SOCKET": $0] } ?? [:] : [:]
-                _ = try cli(createArguments(record, service: service, spec: spec, validated: v, image: images[service]!, extraEnvironment: env), timeout: 120)
-            } else if adbAddress != nil && service == v.manifest.backend.service {
-                // Verify the existing backend still uses our fixed, explicitly
-                // approved Unix transport; VM IP changes are irrelevant.
+                var env: [String: String] = [:]
+                if service == backendName, let adbAddress { env["ADB_SERVER_SOCKET"] = adbAddress }
+                if var created = prepared, service == backendName {
+                    created.command = try imageProcess(images[service]!, override: spec.command)
+                    serviceGuest = created
+                }
+                _ = try cli(createArguments(record, service: service, spec: spec, validated: v, image: images[service]!, extraEnvironment: env, androidGuest: serviceGuest), timeout: 120)
+            } else if adbAddress != nil && service == backendName {
                 let env = (((old?["configuration"] as? [String: Any])?["initProcess"] as? [String: Any])?["environment"] as? [String]) ?? []
-                guard env.contains("ADB_SERVER_SOCKET=\(adbAddress!)") else { throw Problem("ADB 通道配置与现有容器不符；未删除旧容器。请备份容器内数据后移除登记并重新导入。") }
+                guard env.contains("ADB_SERVER_SOCKET=\(adbAddress!)") else { throw Problem(L("The ADB transport does not match the existing container. The old container was not deleted. Back up its data, remove the registration, and import again.", tr("ADB 通道配置与现有容器不符；未删除旧容器。请备份容器内数据后移除登记并重新导入。"))) }
             }
-            try audit(inspect(containerName), record: record, v: v, service: service, spec: spec)
-            if (try inspect(containerName)["status"] as? [String: Any])?["state"] as? String != "running" { _ = try cli(["start", containerName], timeout: 120) }
+            let created = try inspect(containerName)
+            let audited = serviceGuest ?? ((service == backendName && !legacyAndroid) ? guest(from: created, record: record) : nil)
+            try audit(created, record: record, v: v, service: service, spec: spec, androidGuest: audited, legacyPeer: legacyAndroid && service == backendName)
+            if (created["status"] as? [String: Any])?["state"] as? String != "running" { _ = try cli(["start", containerName], timeout: 120) }
         }
         existing = try containers(record)
-        guard existing.count == expected.count, existing.allSatisfy({ ($0["status"] as? [String: Any])?["state"] as? String == "running" }) else { throw Problem("未观察到全部 Apple 容器运行；请查看实际状态或强制关闭") }
-        return "已启动 \(record.name) · Apple container"
+        guard existing.count == expected.count, existing.allSatisfy({ ($0["status"] as? [String: Any])?["state"] as? String == "running" }) else { throw Problem(L("Not every Apple container is running. Check the actual state or force-stop the application", tr("未观察到全部 Apple 容器运行；请查看实际状态或强制关闭"))) }
+        return L("Started \(record.name) · Apple container", "已启动 \(record.name) · Apple container")
     }
     static func startAndroid(_ record: AppRecord, v: Validated, existing: [[String: Any]]) throws -> String {
         let bridge = try AndroidBridge.launchUnix(record)
@@ -263,7 +354,7 @@ enum AppleRuntime {
             let buildExecutable = command.contains("/container/plugins/build/bin/build ") || command.contains("/container build ")
             let ownedBuild = buildExecutable && command.contains("--tag okdocker.local/\(record.project)/") && ownedCreate
             let ownedStart = ownedNames.contains { command == "/usr/local/bin/container start \($0)" || command == "/opt/homebrew/bin/container start \($0)" }
-            if ownedCreate || ownedBuild || ownedStart { guard Darwin.kill(pid, SIGKILL) == 0 || errno == ESRCH else { throw Problem("未确认该应用启动客户端已取消") } }
+            if ownedCreate || ownedBuild || ownedStart { guard Darwin.kill(pid, SIGKILL) == 0 || errno == ESRCH else { throw Problem(tr("未确认该应用启动客户端已取消")) } }
         }
     }
     static func killCurrent(_ record: AppRecord) throws {
@@ -272,13 +363,13 @@ enum AppleRuntime {
         if !ids.isEmpty { _ = try cli(["kill", "--signal", "KILL"] + ids, allowFailure: true) }
         let deadline = Date().addingTimeInterval(12)
         while try ownedContainers(record).contains(where: active) {
-            guard Date() < deadline else { throw Problem("Apple 容器尚未全部停止，未确认强制关闭") }
+            guard Date() < deadline else { throw Problem(tr("Apple 容器尚未全部停止，未确认强制关闭")) }
             Thread.sleep(forTimeInterval: 0.15)
         }
     }
     static func remove(_ record: AppRecord) throws {
         let all = try ownedContainers(record)
-        guard !all.contains(where: active) else { throw Problem("先强制关闭应用，再移除登记") }
+        guard !all.contains(where: active) else { throw Problem(tr("先强制关闭应用，再移除登记")) }
         let ids = try all.map(id)
         if !ids.isEmpty { _ = try cli(["delete"] + ids) }
         if try network(record, create: false) != nil { _ = try cli(["network", "delete", record.project]) }

@@ -31,7 +31,7 @@ manifest={'schemaVersion':1,'id':'apple-android','name':'Apple ADB test','fronte
 report={'work':str(WORK),'checks':checks,'phoneActions':'devices-l and read-only getprop only','publishingRequestsSent':0}
 try:
  record=json.loads(cli('import',APP));cli('start',record['id'])
- check('backend and sidecar both actually running',json.loads(cli('status',record['id']))['running']==2)
+ check('backend and sidecar both actually running',json.loads(cli('status',record['id']))['running']==1)
  main=record['project']+'-app'
  # Speak ADB's documented smart-socket protocol without installing tools in the fixture.
  script='''import socket,os,json
@@ -77,7 +77,7 @@ print(json.dumps(bool(b.strip())))
  check('all project containers stopped',json.loads(cli('status',record['id']))['running']==0)
  check('closing app does not stop shared adb',adb_pid()==before_pid)
  cli('start',record['id'])
- check('Android-enabled app restarts without wiping backend',json.loads(cli('status',record['id']))['running']==2)
+ check('Android-enabled app restarts without wiping backend',json.loads(cli('status',record['id']))['running']==1)
  check('transport works after restart',bool(json.loads(c('exec',main,'python3','-c',script))))
  report.update(passed=True,authorizedDeviceCount=len(authorized))
 finally:

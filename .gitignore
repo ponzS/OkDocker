@@ -21,5 +21,3 @@ credentials.json
 *.db
 *.db-*
 
-# One-off local service maintenance, not part of OkDocker
-/scripts/restart-xhs-key-path.py
