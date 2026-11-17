@@ -13,9 +13,9 @@ enum AppleRuntime {
         throw Problem(tr("Apple container 后端仅支持 Apple Silicon；不使用隐式 x86 模拟"))
         #endif
     }
-    static func cli(_ args: [String], timeout: TimeInterval = 30, allowFailure: Bool = false, cwd: URL? = nil) throws -> CommandResult {
+    static func cli(_ args: [String], timeout: TimeInterval = 30, allowFailure: Bool = false, cwd: URL? = nil, liveLog: URL? = nil) throws -> CommandResult {
         try checkPlatform()
-        return try Runtime.command(Runtime.find("container"), args, timeout: timeout, cwd: cwd, allowFailure: allowFailure)
+        return try Runtime.command(Runtime.find("container"), args, timeout: timeout, cwd: cwd, allowFailure: allowFailure, liveLog: liveLog)
     }
     static func array(_ output: String) throws -> [[String: Any]] {
         guard let value = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [[String: Any]] else { throw Problem(tr("Apple container 返回了无法识别的数据；未确认实际状态")) }
@@ -177,8 +177,9 @@ enum AppleRuntime {
             let image = "okdocker.local/\(record.project)/\(service):\(scope.prefix(12))\(suffix)"
             let directory = try contained(build.context, root: root, directory: true)
             let dockerfile = try contained(build.dockerfile, root: directory, directory: false)
+            Startup.phase(record, L("Building \(service); reusing dependency cache", "正在构建 \(service)，复用依赖缓存"))
             let result = try BuildRecipe.withDockerfile(build, context: directory, dockerfile: dockerfile, scratch: Runtime.appDirectory(record)) { recipe in
-                try cli(["build"] + (fresh ? ["--no-cache", "--pull"] : []) + ["--platform", "linux/arm64", "--progress", "plain", "--tag", image, "--label", "dev.okdocker.app=\(record.id)", "--label", "dev.okdocker.scope=\(scope)", "--file", recipe.path, directory.path], timeout: 1800, cwd: directory)
+                try cli(["build"] + (fresh && build.script != nil ? ["--build-arg", "OKDOCKER_BUILD_ID=\(record.deployment ?? UUID().uuidString)"] : []) + ["--platform", "linux/arm64", "--progress", "plain", "--tag", image, "--label", "dev.okdocker.app=\(record.id)", "--label", "dev.okdocker.scope=\(scope)", "--file", recipe.path, directory.path], timeout: 1800, cwd: directory, liveLog: Startup.log(record))
             }
             try Runtime.write(Data(result.output.utf8), to: Runtime.appDirectory(record).appendingPathComponent("last-build.log"))
             return image

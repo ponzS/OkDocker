@@ -156,10 +156,13 @@ import Darwin
     }
     private func smokeFeatureViews(_ directory: URL) async {
         var views: [(String, AnyView)] = [("rules", AnyView(RulesView(model: model)))]
-        if let app = model.apps.first { views.append(("app-settings", AnyView(AppSettings(model: model, app: app)))) }
+        if let app = model.apps.first {
+            views.append(("app-settings", AnyView(AppSettings(model: model, app: app))))
+            views.append(("startup-logs", AnyView(AppLogs(app: app))))
+        }
         var captured: [String] = []
         for (name, content) in views {
-            let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: name == "rules" ? 810 : 570, height: 670), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: name == "rules" ? 810 : name == "startup-logs" ? 900 : 570, height: 670), styleMask: [.titled, .closable], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.title = "OkDocker · \(name)"
             let host = NSHostingView(rootView: content); panel.contentView = host; panel.center(); panel.makeKeyAndOrderFront(nil)
             try? await Task.sleep(for: .seconds(1))

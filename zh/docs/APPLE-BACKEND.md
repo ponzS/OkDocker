@@ -23,7 +23,7 @@
 
 迁移需要显式确认旧 Docker 实例已停止；若旧引擎可连接，还会核查实际 running=0。旧引擎不可连接不能自动断言旧容器已停止。迁移仅限管理器登记，不切换已有宿主部署或接管其数据；切换前须确认原服务已关闭。
 
-新的受控声明仍使用 schemaVersion 1，不接收额外 CLI 参数、任意 Compose、宿主命令、socket/USB 全设备映射或 SSH-agent/home 隐式共享。容器端口固定 127.0.0.1；0.2.1 增加用户单独授权的宿主 LAN 助手，不改容器配置、不重建可写层（详见 CONFIGURATION.md）。启动前及构建后检查真实 LISTEN，创建后审计官方 inspect 的实际挂载、网络、标签、端口。普通配置变更仍须在停止后重新导入审批；0.3 允许仅应用 `version` 变化时无缓存重建与切换。新镜像/停止态容器准备并审计通过后才停旧服务，原子选择新代际再启动；旧容器可写层和镜像保留，不静默删除。构建脚本通过 `build.script` 在 Dockerfile 的 Linux 阶段执行，不成为宿主命令钩子。完整版本/持久化语义见 CONFIGURATION.md 与 ARCHITECTURE.md。
+新的受控声明仍使用 schemaVersion 1，不接收额外 CLI 参数、任意 Compose、宿主命令、socket/USB 全设备映射或 SSH-agent/home 隐式共享。容器端口固定 127.0.0.1；0.2.1 增加用户单独授权的宿主 LAN 助手，不改容器配置、不重建可写层（详见 CONFIGURATION.md）。启动前及构建后检查真实 LISTEN，创建后审计官方 inspect 的实际挂载、网络、标签、端口。普通配置变更仍须在停止后重新导入审批；0.3 允许仅应用 `version` 变化时复用依赖缓存重建与切换。新镜像/停止态容器准备并审计通过后才停旧服务，原子选择新代际再启动；旧容器可写层和镜像保留，不静默删除。构建脚本通过 `build.script` 在 Dockerfile 的 Linux 阶段执行，不成为宿主命令钩子。完整版本/持久化语义见 CONFIGURATION.md 与 ARCHITECTURE.md。
 
 每应用独立 vmnet 网络。官方自定义网络不提供 Compose 式裸服务名发现；不宣称任意多服务 Compose 等价。ADB 不依赖自定义网络 DNS 或动态 IP。已放弃不可绑定的 vmnet 网关监听方案。新建部署把 Mac 私有令牌 socket 挂进获准后端容器，由同容器里的转发程序注入令牌并在本地 Unix socket 上提供给应用。没有 TCP 桥监听，不修改 PF / DNS / Private Relay。socket 路径位于当前用户临时目录下的 0700 应用子目录，避免 sockaddr_un 长度限制；只给已授权后端注入固定 socket，清理不涉及共享 ADB。
 

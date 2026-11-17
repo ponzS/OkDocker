@@ -28,7 +28,9 @@ enum BuildRecipe {
         }
         // JSON exec form: no expansion or option injection from the supplied path.
         let arguments = try JSONSerialization.data(withJSONObject: command + ["./" + relative], options: [.withoutEscapingSlashes])
-        lines[index] = "RUN " + String(decoding: arguments, as: UTF8.self)
+        // Only this application build step is refreshed on version changes.
+        // Earlier dependency layers remain reusable by the official builder.
+        lines[index] = "ARG OKDOCKER_BUILD_ID\nRUN " + String(decoding: arguments, as: UTF8.self)
         return Data(lines.joined(separator: "\n").utf8)
     }
     static func withDockerfile<T>(_ build: BuildSpec, context: URL, dockerfile: URL, scratch: URL, body: (URL) throws -> T) throws -> T {

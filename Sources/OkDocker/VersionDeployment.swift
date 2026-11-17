@@ -24,12 +24,13 @@ enum VersionDeployment {
         for (service, spec) in v.manifest.services {
             _ = try AppleRuntime.createArguments(next, service: service, spec: spec, validated: v, image: spec.image ?? "okdocker-preflight")
         }
-        // Fresh tags and --no-cache --pull. A failed build never stops the old app.
+        // Fresh tags; reuse dependencies and rerun the declared application build.
         var images: [String: String] = [:]
         for (service, spec) in v.manifest.services.sorted(by: { $0.key < $1.key }) {
             images[service] = try AppleRuntime.image(next, service: service, spec: spec, root: v.root, fresh: true)
         }
         try recheck(record, desired: v)
+        Startup.phase(record, L("Preparing and auditing the new containers", "准备并核验新容器"))
         _ = try AppleRuntime.network(next, create: true)
         let old = try AppleRuntime.containers(record)
         var prepared: AppleRuntime.AndroidGuest?
@@ -55,6 +56,7 @@ enum VersionDeployment {
         let archive = Runtime.appDirectory(record).appendingPathComponent("deployments/\(UUID().uuidString).json")
         try Runtime.write(JSONEncoder().encode(record), to: archive)
         try LANAccess.stop(record)
+        Startup.phase(record, L("Switching to the new deployment", "正在切换到新部署"))
         let activeOld = try old.filter { AppleRuntime.service($0) != "okdocker-adb" && AppleRuntime.active($0) }.map(AppleRuntime.id)
         if !activeOld.isEmpty { _ = try AppleRuntime.cli(["stop", "--time", "30"] + activeOld, timeout: 90) }
         let stillActive = try AppleRuntime.ownedContainers(record).filter { activeOld.contains((try? AppleRuntime.id($0)) ?? "") && AppleRuntime.active($0) }

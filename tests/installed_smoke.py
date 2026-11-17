@@ -46,13 +46,13 @@ def native_gui(tag):
     assert gui.returncode==0
     state=json.loads((out/'native-ui.json').read_text())
     check(tag+': native window/menu/close/reopen',all(state[k] for k in ['windowVisible','menuBarPresent','ownWindowCaptured','closeKeepsMenuBar','reopenWorks']))
-    check(tag+': own rules and app settings rendered',set(json.loads((out/'feature-views.json').read_text())['captured'])=={'rules','app-settings'})
+    check(tag+': own rules, app settings and live log view rendered',set(json.loads((out/'feature-views.json').read_text())['captured'])=={'rules','app-settings','startup-logs'})
 
 before=user_registry(); login_before=cli('login-status').strip()
 try:
     run(['/usr/bin/codesign','--verify','--deep','--strict',APP])
     metadata=plistlib.loads((APP/'Contents/Info.plist').read_bytes())
-    check('installed version 0.3.0 and signature verified',metadata['CFBundleShortVersionString']=='0.3.0')
+    check('installed version 0.3.2 and signature verified',metadata['CFBundleShortVersionString']=='0.3.2')
     digest=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
     check('installed executable equals final packaged build',digest(BIN)==digest(ROOT/'dist/OkDocker.app/Contents/MacOS/OkDocker'))
     check('installed bundled rules equal source and contain new fields',digest(APP/'Contents/Resources/CONFIGURATION.md')==digest(ROOT/'CONFIGURATION.md') and all(x in cli('rules') for x in ['build.script','version','shebang']))

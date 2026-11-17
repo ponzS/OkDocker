@@ -164,3 +164,12 @@ python3 tests/ui_smoke.py
 ```
 
 Runtime fixtures live under this app's Application Support `Validation/` and contain only explicitly staged test code and new data. Do not grant the whole home directory or disable package signatures, TLS, file digests, or TCC in order to test.
+
+## 0.3.2 startup progress, logs and dependency cache (2026-11-17)
+
+- Startup observation now probes the real per-app start lock, including CLI starts, and reports Starting before any container exists. Stale phase metadata cannot claim an active operation. The launcher and menu display the same observation, and log viewing uses a separate operation slot so it remains available during a build.
+- Startup/build output is written directly to a persistent mode-0600 log, visible before command completion and retained on cancellation/failure. A native log window tails the last 256 KiB every second.
+- Per the user's explicit cache preference, version updates no longer pass `--no-cache --pull`. Dependency layers use normal BuildKit caching; a generated ARG refreshes only the declared application build script. No-script Dockerfiles use ordinary content-based invalidation. Unique image tags, new containers, approval checks and transactional deployment remain.
+- 76 Swift tests passed, including actual file locks, stale metadata, live output before process exit, failure log retention and bounded tail reads. Fourteen isolated real Linux checks passed: cross-process Starting, live private logs, updated source output, dependency UUID retained, version-only build UUID changed, failure preserving the previous service and release of the start lock. Seven cancellation/orphan checks passed. No phone, production app, LAN grant or login-setting changes were made by these tests.
+
+- Installed 0.3.2 with registry and old bundle backups; signature and executable equality verified. Twelve installed native/UI and GUI version-update checks passed; existing user registrations and login preference stayed unchanged. A further real pending-build capture showed the launcher Starting label/spinner and the live log window before any fixture container existed. Long lines wrap and retain their prefixes. Fixtures were cancelled and removed without stopping the shared builder or runtime. Evidence: artifacts/startup-ui/, artifacts/version-installed/, artifacts/upgrade-0.3.2/.

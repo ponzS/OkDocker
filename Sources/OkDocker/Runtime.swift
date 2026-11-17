@@ -27,13 +27,14 @@ struct Runtime {
         for dir in paths where FileManager.default.isExecutableFile(atPath: dir + "/" + name) { return dir + "/" + name }
         throw Problem(name == "container" ? L("Apple container is not installed. Install the signed 1.7.1 package from Apple's official Releases, then start the runtime.", "未安装 Apple container。请从 Apple 官方 Releases 安装 1.7.1 签名安装包，再点击启动运行时。") : L("\(name) was not found. The legacy Docker backend needs its original CLI; new apps should use Apple container.", "未找到 \(name)。旧 Docker 后端需要原来的 CLI；新应用请使用 Apple container。"))
     }
-    static func command(_ program: String, _ args: [String], timeout: TimeInterval = 60, cwd: URL? = nil, allowFailure: Bool = false) throws -> CommandResult {
+    static func command(_ program: String, _ args: [String], timeout: TimeInterval = 60, cwd: URL? = nil, allowFailure: Bool = false, liveLog: URL? = nil) throws -> CommandResult {
         try prepare()
         if let cancellation, FileManager.default.fileExists(atPath: cancellation.path) { throw Problem(tr("启动已取消")) }
-        let temp = support.appendingPathComponent("command-\(UUID().uuidString).log")
-        FileManager.default.createFile(atPath: temp.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        let temp = liveLog ?? support.appendingPathComponent("command-\(UUID().uuidString).log")
+        if !FileManager.default.fileExists(atPath: temp.path) { try write(Data(), to: temp) }
         let handle = try FileHandle(forWritingTo: temp)
-        defer { try? handle.close(); try? FileManager.default.removeItem(at: temp) }
+        let offset = try handle.seekToEnd()
+        defer { try? handle.close(); if liveLog == nil { try? FileManager.default.removeItem(at: temp) } }
         let process = Process(); process.executableURL = URL(fileURLWithPath: program); process.arguments = args
         process.standardOutput = handle; process.standardError = handle; process.standardInput = FileHandle.nullDevice
         process.currentDirectoryURL = cwd
@@ -59,7 +60,9 @@ struct Runtime {
             throw Problem(L("The operation timed out after \(Int(timeout)) seconds. Check the runtime's actual state; this does not prove the container has stopped.", "操作超时（\(Int(timeout)) 秒）。请查看运行时的实际状态，不能据此认定容器已停止。"))
         }
         process.waitUntilExit(); try handle.synchronize()
-        let output = String(data: (try? Data(contentsOf: temp)) ?? Data(), encoding: .utf8) ?? ""
+        let reader = try FileHandle(forReadingFrom: temp); defer { try? reader.close() }
+        try reader.seek(toOffset: offset)
+        let output = String(decoding: (try? reader.readToEnd()) ?? Data(), as: UTF8.self)
         if process.terminationStatus != 0 && !allowFailure { throw Problem(String(output.suffix(5000)).trimmingCharacters(in: .whitespacesAndNewlines)) }
         return CommandResult(code: process.terminationStatus, output: output)
     }
@@ -187,7 +190,8 @@ struct Runtime {
         let result = try docker(record.context, ["inspect"] + ids, timeout: 15)
         return try JSONSerialization.jsonObject(with: Data(result.output.utf8)) as? [[String: Any]] ?? []
     }
-    static func observe(_ record: AppRecord) throws -> Observation {
+    static func observe(_ record: AppRecord, includeStartup: Bool = true) throws -> Observation {
+        if includeStartup, let starting = Startup.observation(record) { return starting }
         if record.context == AppleRuntime.context { return try AppleRuntime.observe(record) }
         let containers = try inspect(record)
         if containers.isEmpty { return Observation(state: "stopped", detail: tr("尚未启动或已移除容器"), containers: 0, running: 0, healthy: nil) }
@@ -283,6 +287,7 @@ struct Runtime {
         guard fd >= 0 else { throw Problem(tr("无法锁定启动操作")) }
         defer { flock(fd, LOCK_UN); close(fd) }
         guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw Problem(tr("应用已经在启动")) }
+        try Startup.begin(record)
         let cancel = appDirectory(record).appendingPathComponent("stop.request")
         try? FileManager.default.removeItem(at: cancel)
         flock(gate, LOCK_UN)
@@ -293,9 +298,11 @@ struct Runtime {
                     do { try LANAccess.ensure(record) }
                     catch { return text + tr("；局域网入口未就绪：") + error.localizedDescription }
                 }
+                Startup.phase(record, text)
                 return text
             }
             catch {
+                Startup.phase(record, L("Start failed: \(error.localizedDescription)", "启动失败：\(error.localizedDescription)"))
                 if FileManager.default.fileExists(atPath: cancel.path) {
                     try? $cancellation.withValue(nil) { try killCurrent(record); AndroidBridge.stop(record) }
                     throw Problem(tr("启动已取消"))
@@ -321,7 +328,7 @@ struct Runtime {
     private static func startImpl(_ record: AppRecord) throws -> String {
         if record.context == AppleRuntime.context { return try AppleRuntime.start(record) }
         let v = try approved(record); _ = try engine(record.context)
-        let existing = try observe(record)
+        let existing = try observe(record, includeStartup: false)
         if existing.running > 0 {
             guard existing.state == "running" else { throw Problem(tr("应用部分运行或异常，请先强制关闭后再启动")) }
             return L("\(record.name) is already running", "\(record.name) 已在运行")
@@ -347,7 +354,7 @@ struct Runtime {
             for port in Set([v.manifest.frontend.hostPort, v.manifest.backend.hostPort]) { try requireFreePort(port) }
             let output = try compose(record, ["up", "-d", "--no-build", "--pull", "never", "--remove-orphans"], timeout: 120).output
             try write(Data(output.utf8), to: appDirectory(record).appendingPathComponent("last-start.log"))
-            let observed = try observe(record)
+            let observed = try observe(record, includeStartup: false)
             guard observed.running > 0 else { throw Problem(tr("启动命令结束，但没有观察到运行中的容器。请查看日志。")) }
             return L("Started \(record.name)", "已启动 \(record.name)")
         } catch { if (try? ids(record, runningOnly: true).isEmpty) == true { AndroidBridge.stop(record) }; throw error }

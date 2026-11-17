@@ -22,6 +22,7 @@ import ServiceManagement
     private var autostartHandled: Set<String> = []
     private var startupRequested = false
     private var loginEngineAttempted = false
+    private var logWindows: [String: NSWindow] = [:]
 
     init() {
         if let registry = try? Runtime.load() { apps = registry.apps; context = registry.context }
@@ -120,6 +121,8 @@ import ServiceManagement
     func start(_ app: AppRecord) {
         guard !busy.contains(app.id + "-stop") else { return }
         if app.context != AppleRuntime.context { migrate(app); return }
+        if busy.contains(app.id) || Startup.active(app) { logs(app); return }
+        observations[app.id] = Observation(state: "starting", detail: L("Checking version and preparing startup", "检查版本，准备启动"), containers: 0, running: 0, healthy: nil)
         perform(app.id) { try Runtime.start(app) }
     }
     func migrate(_ app: AppRecord) {
@@ -261,14 +264,21 @@ import ServiceManagement
     }
     func alert(_ text: String) { let a = NSAlert(); a.messageText = "OkDocker"; a.informativeText = text; a.addButton(withTitle: tr("知道了")); a.runModal() }
     func logs(_ app: AppRecord) {
-        perform(app.id) {
+        if let window = logWindows[app.id] { window.makeKeyAndOrderFront(nil) }
+        else {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 580), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.title = "\(app.name) · \(L("Logs", "日志"))"
+            window.contentView = NSHostingView(rootView: AppLogs(app: app)); window.center(); window.makeKeyAndOrderFront(nil)
+            logWindows[app.id] = window
+        }
+        // Log viewing never competes with the app's start operation.
+        perform("logs-" + app.id) {
             let ids = try Runtime.ids(app)
-            guard let first = ids.first else { throw Problem(tr("没有可查看的容器日志")) }
+            guard let first = ids.first else { return L("Startup log opened", "已打开启动日志") }
             let output = app.context == AppleRuntime.context ? try AppleRuntime.cli(["logs", "-n", "200", first], allowFailure: true).output : try Runtime.docker(app.context, ["logs", "--tail", "200", first], allowFailure: true).output
             let file = Runtime.appDirectory(app).appendingPathComponent("container.log")
             try Runtime.write(Data(output.utf8), to: file)
-            Task { @MainActor in NSWorkspace.shared.open(file) }
-            return tr("已打开最近 200 行日志（可能包含应用自己的敏感内容，请勿随意分享）")
+            return L("Logs opened; startup output refreshes live", "日志已打开，启动输出实时刷新")
         }
     }
 }

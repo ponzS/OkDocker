@@ -84,7 +84,7 @@ To prepare a project, open **Configuration rules** and click **Copy the full rul
 
 ### Update an app
 
-After changing source, increase `version` in `okdocker.json`, for example `1.0.0` to `1.0.1`, then start or right-click **Start / check for update**. A version change builds a new image with no cache. The old service stops only after that build succeeds. The same version is not rebuilt. Opening the page does not update.
+After changing source, increase `version` in `okdocker.json`, for example `1.0.0` to `1.0.1`, then start or right-click **Start / check for update**. A version change builds a new image while reusing dependency cache. The old service stops only after that build succeeds. The same version is not rebuilt. Opening the page does not update.
 
 A project may set `script` under `services.<name>.build`:
 
@@ -142,3 +142,5 @@ The registry is in `~/Library/Application Support/OkDocker/`. Run `swift test` f
 ## License
 
 OkDocker is under the [MIT License](LICENSE). Apple container and other third-party components keep their own licenses.
+
+While starting or building, the icon shows **Starting** across GUI and CLI launches. **View logs** opens live startup/build output even before a container exists. Dependency layers remain cached; a version change reruns the declared `build.script` while reusing earlier layers. Without a script, normal Dockerfile content-based cache invalidation applies.

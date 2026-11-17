@@ -38,7 +38,7 @@ struct AppActions: View {
         Button(tr("复制局域网地址"), systemImage: "doc.on.doc") { model.copyLAN(app) }.disabled(model.lanStatuses[app.id]?.addresses.isEmpty != false)
         Toggle(tr("允许局域网访问"), isOn: Binding(get: { model.apps.first(where: { $0.id == app.id })?.lanAccess == true }, set: { model.setLAN(app, enabled: $0) })).disabled(model.busy.contains("lan-" + app.id))
         Divider()
-        Button(app.context == AppleRuntime.context ? tr("启动 / 检查版本更新") : tr("迁移到 Apple container…"), systemImage: "play.fill") { model.start(app) }.disabled(model.busy.contains(app.id))
+        Button(app.context == AppleRuntime.context ? tr("启动 / 检查版本更新") : tr("迁移到 Apple container…"), systemImage: "play.fill") { model.start(app) }.disabled(model.busy.contains(app.id) || Startup.active(app))
         Button(tr("强制关闭应用"), systemImage: "stop.fill", role: .destructive) { model.close(app) }.disabled(model.busy.contains(app.id + "-stop") || (model.observations[app.id]?.state == "stopped" && !model.busy.contains(app.id)))
         Toggle(tr("登录后自动启动"), isOn: Binding(get: { app.autoStart }, set: { model.setAuto(app, enabled: $0) }))
         Divider()
@@ -117,14 +117,15 @@ struct LauncherView: View {
     private func tile(_ app: AppRecord) -> some View {
         let observation = model.observations[app.id] ?? .unknown
         return Button {
-            if !model.busy.contains(app.id) && !model.busy.contains(app.id + "-stop") { observation.running > 0 ? model.open(app) : model.start(app) }
+            if observation.state == "starting" || model.busy.contains(app.id) { model.logs(app) }
+            else if !model.busy.contains(app.id + "-stop") { observation.running > 0 ? model.open(app) : model.start(app) }
         } label: { VStack(spacing: 11) {
             ZStack(alignment: .bottomTrailing) {
                 AppArtwork(model: model, app: app)
-                if model.busy.contains(app.id) { ProgressView().controlSize(.small).padding(6).background(.regularMaterial, in: Circle()).offset(x: 7, y: 4) }
+                if model.busy.contains(app.id) || observation.state == "starting" { ProgressView().controlSize(.small).padding(6).background(.regularMaterial, in: Circle()).offset(x: 7, y: 4) }
             }
             Text(app.name).font(.system(.body, design: .rounded, weight: .medium)).lineLimit(2).multilineTextAlignment(.center)
-            HStack(spacing: 5) { StatusDot(observation: observation); Text(model.busy.contains(app.id) ? tr("操作中…") : (app.context == AppleRuntime.context ? observation.title : L("Legacy Docker · \(observation.title)", "旧 Docker · \(observation.title)"))).font(.caption).foregroundStyle(.secondary); if app.autoStart { Image(systemName: "sunrise.fill").font(.caption2).foregroundStyle(.secondary) } }
+            HStack(spacing: 5) { StatusDot(observation: observation); Text(model.busy.contains(app.id) && observation.state != "starting" ? tr("操作中…") : (app.context == AppleRuntime.context ? observation.title : L("Legacy Docker · \(observation.title)", "旧 Docker · \(observation.title)"))).font(.caption).foregroundStyle(.secondary); if app.autoStart { Image(systemName: "sunrise.fill").font(.caption2).foregroundStyle(.secondary) } }
         }
         .frame(maxWidth: .infinity).frame(height: 154).contentShape(RoundedRectangle(cornerRadius: 24))
         }.buttonStyle(.plain)
@@ -155,9 +156,9 @@ struct MenuPanel: View {
                         let o = model.observations[app.id] ?? .unknown
                         HStack(spacing: 11) {
                             AppArtwork(model: model, app: app, size: 36)
-                            VStack(alignment: .leading, spacing: 3) { Text(app.name).fontWeight(.medium); HStack(spacing: 5) { StatusDot(observation: o); Text(model.busy.contains(app.id) ? tr("操作中…") : o.title).font(.caption).foregroundStyle(.secondary) } }
+                            VStack(alignment: .leading, spacing: 3) { Text(app.name).fontWeight(.medium); HStack(spacing: 5) { StatusDot(observation: o); Text(model.busy.contains(app.id) && o.state != "starting" ? tr("操作中…") : o.title).font(.caption).foregroundStyle(.secondary) } }
                             Spacer()
-                            if model.busy.contains(app.id) { ProgressView().controlSize(.small) }
+                            if model.busy.contains(app.id) || o.state == "starting" { ProgressView().controlSize(.small) }
                             else { Button { o.running > 0 ? model.open(app) : model.start(app) } label: { Image(systemName: o.running > 0 ? "safari" : "play.fill").frame(width: 24, height: 24) }.buttonStyle(.borderless).help(o.running > 0 ? tr("从浏览器打开") : tr("启动")) }
                             Menu { AppActions(model: model, app: app) } label: { Image(systemName: "ellipsis").frame(width: 18) }.menuStyle(.borderlessButton).fixedSize()
                         }.padding(9).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))

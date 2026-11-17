@@ -112,7 +112,7 @@ try:
     check('ADB transport restored without exposing an ADB TCP port', adb_probe(second['id']) and all(p.get('containerPort')!=5037 for p in ports))
     # Manifest is excluded from context. Only its version changes: a new UUID proves RUN is not cached.
     m['version']='2.0.1'; save(root,m); cli('start',a['id'],timeout=600); third = active(a); third_build=payload(p)
-    check('version-only update bypasses build cache', third_build!=second_build and third['id']!=second['id'])
+    check('version-only update reruns the application build script', third_build!=second_build and third['id']!=second['id'])
     c('kill','--signal','KILL',third['id']); cli('start',a['id'])
     check('partially stopped selected generation resumes without rebuilding', active(a)['id']==third['id'] and payload(p)==third_build)
     # A failing script cannot take the currently running version down or change selection.
